@@ -1,0 +1,25 @@
+[project]
+name = "collector"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "requests",
+    "feedparser",
+    "types-requests",
+    "azure-storage-blob>=12.25.1",
+    "assemblyai>=0.40.2",
+    "pydantic>=2.11.5",
+    "torch>=2.7.0",
+    "transformers>=4.52.3",
+    "librosa>=0.11.0",
+    "ulid-py>=1.1.0",
+    "fastapi[standard]>=0.115.12",
+    "uvicorn>=0.34.2",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.11.11",
+]
