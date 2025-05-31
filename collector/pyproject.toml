@@ -8,6 +8,8 @@ dependencies = [
     "requests",
     "feedparser",
     "types-requests",
+    "beautifulsoup4",
+    "types-beautifulsoup4",
     "azure-storage-blob>=12.25.1",
     "assemblyai>=0.40.2",
     "pydantic>=2.11.5",
@@ -17,6 +19,9 @@ dependencies = [
     "ulid-py>=1.1.0",
     "fastapi[standard]>=0.115.12",
     "uvicorn>=0.34.2",
+    "whisper-timestamped>=1.15.8",
+    "openai-whisper>=20240930",
+    "yt-dlp[default]>=2025.5.22",
 ]
 
 [dependency-groups]

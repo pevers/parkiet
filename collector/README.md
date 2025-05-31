@@ -7,7 +7,8 @@ Strategy to collect sensible data:
 
 - Skip the trailer episodes
 - Skip the start of the episode
-- Skip non-Dutch baked in server side ads
+- Skip non-Dutch baked in server side ads or speech
+- Skip if music is too loud (Pyannote)
 
 ```
 uv run python src/download_podcasts.py
@@ -15,25 +16,24 @@ uv run python src/download_podcasts.py
 
 ## Plan
 
-- Use AssemblyAI to transcribe the audio with speaker diarization and preferably support for disfluencies
+- Transcribe Dutch podcasts with disfluencies and diarization. We need to fine-tune Whisper to make this work.
 - Chunk the segments and throw away bad predictions. Chunks are stored in `data/chunks`
-- Use English SER model to label the chunks with emotions. Fine-tune the model on a small set of Dutch data if quality is not good enough
 - Create prompts and optionally add fuzzing through a GPT. Prompts are stored in `data/prompts`
+- First train a first version without SER labels and speech events until we have a good baseline
+- Use English SER model to label the chunks with emotions. Fine-tune the model on a small set of Dutch data if quality is not good enough.
+- Fine-tune the base model with speech events
+- Fine-tune the base model with emotions
 
-### Speaker Diarization
+### Paid Services vs. Open Source
 
-Whisper doesn't support speaker diarization out of the box. So we use AssemblyAI (which is extremely accurate). 
+AssemlbyAI delivers top quality but there is no support for disfluencies. It also doesn't support speech events.
+Elevenlabs does support speech events.
 
 Costs are $0.37 / h. So at 300 hours that's only $111.
 
-### SER
-
-We might need a high quality Dutch dataset to fine-tune the model a bit further.
-This shouldn't be too hard to create. I know some voice actors that can help out.
-
 ### Prompt Generation
 
-TODO: Add *fluent* prompts on transcripts with disfluencies disabled.
+TODO: Add a percentage of *fluent* prompts on transcripts with disfluencies to learn them automatically.
 
 TODO: Add *fuzzing* prompts by using a GPT to generate script variations.
 
@@ -45,5 +45,201 @@ In order to quickly inspect data and adjust annotations, we need a viewer.
 This simple CLI script can be used as follows:
 
 ```
-uv run python src/viewer.py <path_to_chunks.json>
+uv run python src/viewer.py
 ```
+
+## Experiments
+
+Some experiments done to test quality of certain models.
+
+### Transcription Models
+
+Like the Parakeet paper. Maybe we should just create a dataset with Dutch disfluencies.
+I used ReplicateAPI to quickly run tests.
+
+Also check out the Open ASR leaderboard: https://huggingface.co/spaces/hf-audio/open_asr_leaderboard.
+
+- [whisper-diarization](https://github.com/MahmoudAshraf97/whisper-diarization) Crappy organized code. Results look OK. No disfluencies which is a problem. I used this one eventually to test: https://github.com/thomasmol/cog-whisper-diarization?tab=readme-ov-file . 
+
+- [CrisperWhisper](https://github.com/CrisperWhisper/CrisperWhisper). Native support for disfluencies but no speaker diarization. Output: `Ja, [UH] d dat is niet zo makkelijk [UH] uitteleggen, [UH] zeg maar. Weet je?` for the test sample which is very accurate! We can simply use Pyannote to distinguish the speakers in the segments.
+
+- [whisper-timestamped](https://github.com/linto-ai/whisper-timestamped) Seems to support disfluencies and is timestamped!
+
+```json
+{
+  "text": " Ja, dat is niet zo makkelijk uit te leggen, zeg maar. Weet je?",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 6.3,
+      "text": " Ja, dat is niet zo makkelijk uit te leggen, zeg maar. Weet je?",
+      "confidence": 0.94,
+      "words": [
+        {
+          "text": "Ja,",
+          "start": 0.0,
+          "end": 0.32,
+          "confidence": 0.88
+        },
+        {
+          "text": "[*]",
+          "start": 0.4,
+          "end": 1.22,
+          "confidence": 0.0
+        },
+        {
+          "text": "dat",
+          "start": 1.22,
+          "end": 1.42,
+          "confidence": 0.89
+        },
+        {
+          "text": "is",
+          "start": 1.42,
+          "end": 2.08,
+          "confidence": 1.0
+        },
+        {
+          "text": "niet",
+          "start": 2.08,
+          "end": 2.34,
+          "confidence": 0.99
+        },
+        {
+          "text": "zo",
+          "start": 2.34,
+          "end": 2.48,
+          "confidence": 1.0
+        },
+        {
+          "text": "makkelijk",
+          "start": 2.48,
+          "end": 2.92,
+          "confidence": 0.99
+        },
+        {
+          "text": "uit",
+          "start": 2.92,
+          "end": 3.36,
+          "confidence": 0.99
+        },
+        {
+          "text": "te",
+          "start": 3.36,
+          "end": 3.6,
+          "confidence": 1.0
+        },
+        {
+          "text": "leggen,",
+          "start": 3.6,
+          "end": 4.0,
+          "confidence": 1.0
+        },
+        {
+          "text": "[*]",
+          "start": 4.02,
+          "end": 4.62,
+          "confidence": 0.0
+        },
+        {
+          "text": "zeg",
+          "start": 4.62,
+          "end": 5.0,
+          "confidence": 0.98
+        },
+        {
+          "text": "maar.",
+          "start": 5.0,
+          "end": 5.32,
+          "confidence": 0.98
+        },
+        {
+          "text": "[*]",
+          "start": 5.38,
+          "end": 5.72,
+          "confidence": 0.0
+        },
+        {
+          "text": "Weet",
+          "start": 5.72,
+          "end": 6.22,
+          "confidence": 0.74
+        },
+        {
+          "text": "je?",
+          "start": 6.22,
+          "end": 6.3,
+          "confidence": 0.99
+        }
+      ]
+    }
+  ],
+  "language": "nl"
+}  
+```
+
+On top of it it is fast. Disfluencies are marked as `[*]` so we don't have the exact disfluency but at least we have a better alignment.
+We don't have the speaker identification. So we should use something like pyannote to identify the speaker embedding after processing the audio. _Warning_: whisper-timestamped can get off-rails for long audio files, we should split it up and stitch it together.
+
+We need to annotate data to have the disfluencies as well.
+
+### Fine-tuning Whisper for Disfluencies
+
+As a first start we fine-tune the Whisper model on the AudioSet dataset to have the actual disfluencies.
+
+We then use this model to collect more data for annotation.
+
+### Research Papers
+
+Research topics required for training a successful model.
+
+* Parakeet research: https://jordandarefsky.com/blog/2024/parakeet/
+* Better speech synthesis through scaling: https://arxiv.org/pdf/2305.07243
+* Crisper Whisper: https://arxiv.org/pdf/2408.16589 and forced alignment: https://docs.pytorch.org/audio/main/tutorials/ctc_forced_alignment_api_tutorial.html
+* FunAudioLLM: Voice Understanding and Generation Foundation Models for Natural Interaction Between Humans and LLMs: https://funaudiollm.github.io/ . Looks very promising but the Large model is not available yet.
+
+### SER
+
+Speech Emotion Recognition (SER) is the task of predicting the emotion of a speaker in a given audio clip. Most podcasts are recorded in a high energetic voice, so the emotion that is detected is usually 'happy'.
+
+_IMPORTANT_: Quality right now does not seem to be good enough to identify emotions in Dutch text. 
+
+Plan:
+
+Fine-tune https://huggingface.co/firdhokk/speech-emotion-recognition-with-openai-whisper-large-v3 to output better emotions.
+
+- Collect way more diverse audio than just podcasts to train a classifier. Option: hoorspelen.eu, hoorspelen NPO Radio 1. Toneelstukken etc.
+- Use the English classifier and then sample records to create a diverse set with the different emotions. 
+- Then send it for annotation to fix it
+
+We probably can get away with 10 hours of podcast data.
+
+## Data Annotation Project
+
+Maybe we can pre-train with English data and then run it on Dutch data to get a rough estimate. We can then easily gather more data to fine-tune the model. We can probably use PodcastFillers datset ?
+
+Use Label Studio to annotate the data.
+
+Prompt + Audio:
+
+```
+[S1] Dat lijkt mij wel een goed idee!
+[S2] Nee, wat een onzin.
+```
+
+Then we annotate:
+
+- Disfluencies
+    - Discourse Fillers: Zeg maar, nou ja, weet je (maybe this already works?)
+    - Filler Pauses: Uh / Uuh, Eh / Ehm, Mm / Hm
+    - Non Speech Events: (lacht), (zucht), (hoest), (ademen)
+    - Back-channels: mm-hmm, ja, hmm
+- Emotion: Happy, Neutral, Sad, Angry, Fearful, Disgusted, Surprised
+- Correct transcription mistakes if any
+- Quality
+    - If there is a background noise
+
+Data collection from:
+
+- Hoorspelen
+- Podcasts, but make sure that we don't have only two speakers, mix up the podcasts
