@@ -11,7 +11,6 @@ dependencies = [
     "beautifulsoup4",
     "types-beautifulsoup4",
     "azure-storage-blob>=12.25.1",
-    "assemblyai>=0.40.2",
     "pydantic>=2.11.5",
     "torch>=2.7.0",
     "transformers>=4.52.3",
@@ -20,8 +19,8 @@ dependencies = [
     "fastapi[standard]>=0.115.12",
     "uvicorn>=0.34.2",
     "whisper-timestamped>=1.15.8",
-    "openai-whisper>=20240930",
-    "yt-dlp[default]>=2025.5.22",
+    "pyannote.audio>=3.1.1",
+    "numpy>=1.24.0"
 ]
 
 [dependency-groups]

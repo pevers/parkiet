@@ -1,6 +1,6 @@
 # Data
 
-We collected a list of popular Dutch podcasts and transcribed the audio.
+We collected a list of popular Dutch podcasts and "hoorspelen" and transcribed the audio.
 Quality control is done via the transcription model and the audio is then split into segments up to 30 seconds after which prompts are generated.
 
 Strategy to collect sensible data:
@@ -16,20 +16,28 @@ uv run python src/download_podcasts.py
 
 ## Plan
 
-- Transcribe Dutch podcasts with disfluencies and diarization. We need to fine-tune Whisper to make this work.
-- Chunk the segments and throw away bad predictions. Chunks are stored in `data/chunks`
-- Create prompts and optionally add fuzzing through a GPT. Prompts are stored in `data/prompts`
-- First train a first version without SER labels and speech events until we have a good baseline
-- Use English SER model to label the chunks with emotions. Fine-tune the model on a small set of Dutch data if quality is not good enough.
-- Fine-tune the base model with speech events
+We need audio in and phonemes out! Data transformation can be done by mixing audio with a lot of tricks.
+
+- [ ] Remove start and end of the audio (usually contains bad audio)
+- [ ] Transcribe some samples with Crisper Whisper to see if it works well enough. I think it is not reliable enough to transcribe the whole dataset. The one sample I used worked well for stuttering, but another sample completely failed.
+- [ ] Crisper-AT doesn't seem reliable enough for detecting speech events. So we should train our own model
+- [ ] Use Speechmatics to get a good baseline. I think most audio models are not that great at verbatim speech transcription of Dutch text, simply because it is not a common language
+- [ ] Annotate a subset of this data (10 hours) to have high quality data that includes speech events and disfluencies
+- [ ] While annotating is happening we can try to already fine-tune Whisper on common datasets with Dutch disfluencies and verbatim text (such as Corpus Nederlands Gesproken)
+- [ ] Fine-tune a Whisper model to hopefully output higher quality disfluencies and speech events for Dutch. Rinse and repeat until we have a strong model
+- [ ] Chunk the segments and throw away bad predictions. Chunks are stored in `data/chunks`
+- [ ] Create prompts and optionally add fuzzing through a GPT. Prompts are stored in `data/prompts`
+- [ ] First train a version without SER labels but with speech events and disfluencies.
+- [ ] Use English SER model to label the chunks with emotions. Fine-tune the model on a small set of Dutch data if quality is not good enough.
 - Fine-tune the base model with emotions
 
 ### Paid Services vs. Open Source
 
-AssemlbyAI delivers top quality but there is no support for disfluencies. It also doesn't support speech events.
-Elevenlabs does support speech events.
+AssemlbyAI delivers top quality but there is no support for disfluencies. It also doesn't support speech events. Costs are $0.37 / h. So at 300 hours that's only $111.
 
-Costs are $0.37 / h. So at 300 hours that's only $111.
+Elevenlabs does support speech events but is costly and disfluencies are not that great.
+
+Speechmatics seems to be a winner for both speech events (limited) and disfluencies.
 
 ### Prompt Generation
 
@@ -52,18 +60,24 @@ uv run python src/viewer.py
 
 Some experiments done to test quality of certain models.
 
-### Transcription Models
+### Audio Models
 
 Like the Parakeet paper. Maybe we should just create a dataset with Dutch disfluencies.
 I used ReplicateAPI to quickly run tests.
 
 Also check out the Open ASR leaderboard: https://huggingface.co/spaces/hf-audio/open_asr_leaderboard.
 
+- [Dia](https://huggingface.co/nari-labs/Dia-1.6B). Inspiration for this project. Even though they claim you can do speech events, it seems they barely work. I suspected that because it is really really hard to find a good collection of audio events. Something like (chuckle) is not so often detected and representable in 1000 hours of audio. This is probably why most commercial alternatives only offer limmited audio event detection. They also made the mistake to not incorporate DTW in their model so it always feels sped up.
+
 - [whisper-diarization](https://github.com/MahmoudAshraf97/whisper-diarization) Crappy organized code. Results look OK. No disfluencies which is a problem. I used this one eventually to test: https://github.com/thomasmol/cog-whisper-diarization?tab=readme-ov-file . 
 
 - [CrisperWhisper](https://github.com/CrisperWhisper/CrisperWhisper). Native support for disfluencies but no speaker diarization. Output: `Ja, [UH] d dat is niet zo makkelijk [UH] uitteleggen, [UH] zeg maar. Weet je?` for the test sample which is very accurate! We can simply use Pyannote to distinguish the speakers in the segments.
 
+- [Whisper-AT](https://github.com/YuanGongND/whisper-at). Whisper fine-tuned on Audio Tagging. Doesn't work that well for some reason even though people claim it is quite good at detecting laughter for example.
+
 - [whisper-timestamped](https://github.com/linto-ai/whisper-timestamped) Seems to support disfluencies and is timestamped!
+
+- [DisfluencySpeech](https://huggingface.co/datasets/amaai-lab/DisfluencySpeech)
 
 ```json
 {
@@ -179,15 +193,13 @@ Also check out the Open ASR leaderboard: https://huggingface.co/spaces/hf-audio/
 ```
 
 On top of it it is fast. Disfluencies are marked as `[*]` so we don't have the exact disfluency but at least we have a better alignment.
-We don't have the speaker identification. So we should use something like pyannote to identify the speaker embedding after processing the audio. _Warning_: whisper-timestamped can get off-rails for long audio files, we should split it up and stitch it together.
+We don't have the speaker identification. So we should use something like pyannote to identify the speaker embedding after processing the audio. _Warning_: Whisper can get off-rails for long audio files, we should split it up and stitch it together.
 
 We need to annotate data to have the disfluencies as well.
 
-### Fine-tuning Whisper for Disfluencies
+### Fine-tuning Whisper for Disfluencies and Speech Events
 
-As a first start we fine-tune the Whisper model on the AudioSet dataset to have the actual disfluencies.
-
-We then use this model to collect more data for annotation.
+We can use the Crisper Whisper model to collect data with the inclusion of disfluencies. It works good enough for Dutch. Then we can use an event tagger, such as Whisper-AT to collect the speech events and merge them back in the transcript. This should result in prompts that work for our model. We should then send it for annotation to fix any issues and then use the data to fine-tune Whisper.
 
 ### Research Papers
 
@@ -197,22 +209,13 @@ Research topics required for training a successful model.
 * Better speech synthesis through scaling: https://arxiv.org/pdf/2305.07243
 * Crisper Whisper: https://arxiv.org/pdf/2408.16589 and forced alignment: https://docs.pytorch.org/audio/main/tutorials/ctc_forced_alignment_api_tutorial.html
 * FunAudioLLM: Voice Understanding and Generation Foundation Models for Natural Interaction Between Humans and LLMs: https://funaudiollm.github.io/ . Looks very promising but the Large model is not available yet.
+* Voc2vec: https://arxiv.org/pdf/2502.16298 . Seems promising but a lot has to be done to get a normal classifier. 
 
 ### SER
 
 Speech Emotion Recognition (SER) is the task of predicting the emotion of a speaker in a given audio clip. Most podcasts are recorded in a high energetic voice, so the emotion that is detected is usually 'happy'.
 
-_IMPORTANT_: Quality right now does not seem to be good enough to identify emotions in Dutch text. 
-
-Plan:
-
-Fine-tune https://huggingface.co/firdhokk/speech-emotion-recognition-with-openai-whisper-large-v3 to output better emotions.
-
-- Collect way more diverse audio than just podcasts to train a classifier. Option: hoorspelen.eu, hoorspelen NPO Radio 1. Toneelstukken etc.
-- Use the English classifier and then sample records to create a diverse set with the different emotions. 
-- Then send it for annotation to fix it
-
-We probably can get away with 10 hours of podcast data.
+_IMPORTANT_: Quality right now does not seem to be good enough to identify emotions in Dutch text. Let's first create a model that can actually output audio with disfluencies and focus on the emotion part later.
 
 ## Data Annotation Project
 
@@ -232,9 +235,11 @@ Then we annotate:
 - Disfluencies
     - Discourse Fillers: Zeg maar, nou ja, weet je (maybe this already works?)
     - Filler Pauses: Uh / Uuh, Eh / Ehm, Mm / Hm
-    - Non Speech Events: (lacht), (zucht), (hoest), (ademen)
     - Back-channels: mm-hmm, ja, hmm
-- Emotion: Happy, Neutral, Sad, Angry, Fearful, Disgusted, Surprised
+- Emotion: Happy, Neutral, Sad, Angry, Fearful, 
+Disgusted, Surprised
+- Speaker events: (laughs), (clears throat), (sighs), (gasps), (coughs), (singing), (sings), (mumbles), (beep), (groans), (sniffs), (claps), (screams), (inhales), (exhales), (applause), (burps), (humming), (sneezes), (chuckle), (whistles). Maybe just go for the most basic ones: (laughts), (sighs), (breahts), (coughs), (clears throat), (claps)
+- Sex: Male, Female
 - Correct transcription mistakes if any
 - Quality
     - If there is a background noise
