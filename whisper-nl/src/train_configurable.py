@@ -49,10 +49,10 @@ class WhisperDataCollator:
             return_tensors="pt",
         )
 
-        # Pad label features
+        # Pad label features with explicit padding token
         labels_batch = self.processor.tokenizer.pad(
             [{"input_ids": feature} for feature in label_features],
-            return_tensors="pt",
+            return_tensors="pt"
         )
 
         # Replace padding with -100 to ignore in loss calculation
@@ -110,6 +110,9 @@ class ConfigurableWhisperTrainer:
             language=self.config.language,
             task=self.config.task,
         )
+        
+        # Ensure forced_decoder_ids are properly cleared in processor
+        self.processor.tokenizer.set_prefix_tokens(language=self.config.language, task=self.config.task)
 
         # Load model
         self.model = WhisperForConditionalGeneration.from_pretrained(
@@ -120,11 +123,17 @@ class ConfigurableWhisperTrainer:
         if len(self.tokenizer) > self.model.config.vocab_size:
             self.model.resize_token_embeddings(len(self.tokenizer))
 
-        # Model configuration
+        # Model configuration - clear forced decoder IDs completely
         self.model.generation_config.forced_decoder_ids = None
         self.model.generation_config.suppress_tokens = []
         self.model.generation_config.language = self.config.language
         self.model.generation_config.task = self.config.task
+        self.model.config.forced_decoder_ids = None
+        
+        # Disable caching when gradient checkpointing is enabled
+        if self.config.gradient_checkpointing:
+            self.model.config.use_cache = False
+            self.model.generation_config.use_cache = False
 
         # Freeze parts of model if specified
         if self.config.freeze_feature_encoder:
@@ -288,10 +297,10 @@ class ConfigurableWhisperTrainer:
         """Compute WER metric"""
         pred_ids, label_ids = eval_preds
 
-        # Replace -100 with pad token id
+        # Replace -100 with pad token id for proper decoding
         label_ids[label_ids == -100] = self.tokenizer.pad_token_id
 
-        # Decode predictions and labels
+        # Decode predictions and labels with proper attention handling
         pred_str = self.tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
         label_str = self.tokenizer.batch_decode(label_ids, skip_special_tokens=True)
 
@@ -323,6 +332,7 @@ class ConfigurableWhisperTrainer:
             save_steps=self.config.save_steps,
             logging_steps=self.config.logging_steps,
             report_to=self.config.report_to,
+            run_name=self.config.run_name,
             load_best_model_at_end=True,
             metric_for_best_model="wer",
             greater_is_better=False,
@@ -403,6 +413,9 @@ def main():
     parser.add_argument(
         "--max-eval-samples", type=int, help="Limit number of evaluation samples"
     )
+    parser.add_argument(
+        "--run-name", type=str, help="Custom name for TensorBoard run"
+    )
 
     args = parser.parse_args()
 
@@ -424,6 +437,8 @@ def main():
         config.max_train_samples = args.max_train_samples
     if args.max_eval_samples:
         config.max_eval_samples = args.max_eval_samples
+    if args.run_name:
+        config.run_name = args.run_name
 
     if not torch.cuda.is_available():
         logger.warning("CUDA not available. Training is not possible on CPU.")

@@ -25,7 +25,7 @@ class TrainingConfig:
     min_duration_seconds: float = 0.5
     max_train_samples: Optional[int] = None
     max_eval_samples: Optional[int] = None
-    preprocessed_cache_dir: Optional[str] = "./cache/preprocessed"
+    preprocessed_cache_dir: Optional[str] = "../data/training/.cache/preprocessed"
 
     # Training hyperparameters
     output_dir: str = "./whisper-small-dutch-cgn"
@@ -34,7 +34,7 @@ class TrainingConfig:
     gradient_accumulation_steps: int = 1
     learning_rate: float = 1e-5
     warmup_steps: int = 500
-    max_steps: int = 5000
+    max_steps: int = 15000
 
     # Training settings
     gradient_checkpointing: bool = True
@@ -54,6 +54,7 @@ class TrainingConfig:
     # Monitoring
     report_to: list = None
     push_to_hub: bool = False
+    run_name: Optional[str] = None  # Custom name for TensorBoard runs
 
     def __post_init__(self):
         if self.report_to is None:
@@ -69,35 +70,41 @@ DEFAULT_CONFIG = TrainingConfig()
 class QuickTestConfig(TrainingConfig):
     """Quick test configuration with smaller parameters"""
 
-    max_steps: int = 100
-    eval_steps: int = 50
-    save_steps: int = 50
-    max_train_samples: int = 100
-    max_eval_samples: int = 20
+    max_steps: int = 2000
+    eval_steps: int = 500
+    save_steps: int = 500
+    max_train_samples: int = 1000
+    max_eval_samples: int = 100
     per_device_train_batch_size: int = 4
     per_device_eval_batch_size: int = 2
+    run_name: str = "whisper-dutch-quick-test"
 
 
 @dataclass
 class ProductionConfig(TrainingConfig):
     """Production configuration with optimized parameters"""
 
-    max_steps: int = 10000
-    eval_steps: int = 500
-    save_steps: int = 500
+    max_steps: int = 4500  # ~3 epochs for 90k samples (effective batch size 64)
+    eval_steps: int = 750   # Evaluate ~6 times per epoch
+    save_steps: int = 750   # Save ~6 times per epoch
     learning_rate: float = 5e-6
-    warmup_steps: int = 1000
+    warmup_steps: int = 700  # ~15% of max_steps
     per_device_train_batch_size: int = 32
     gradient_accumulation_steps: int = 2
+    run_name: str = "whisper-dutch-production"
 
 
 @dataclass
 class LowMemoryConfig(TrainingConfig):
     """Configuration for systems with limited GPU memory"""
 
-    per_device_train_batch_size: int = 4
-    per_device_eval_batch_size: int = 2
+    max_steps: int = 7000
+    eval_steps: int = 1000
+    save_steps: int = 1000
+    per_device_train_batch_size: int = 10
+    per_device_eval_batch_size: int = 4
     gradient_accumulation_steps: int = 4
     gradient_checkpointing: bool = True
     fp16: bool = True
-    dataloader_num_workers: int = 1
+    dataloader_num_workers: int = 4
+    run_name: str = "whisper-dutch-low-memory"
