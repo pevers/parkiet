@@ -43,7 +43,7 @@ class TrainingConfig:
 
     # Evaluation and logging
     eval_strategy: str = "steps"
-    eval_steps: int = 1000
+    eval_steps: int = 500
     save_steps: int = 1000
     logging_steps: int = 25
     save_total_limit: int = 3
@@ -76,7 +76,7 @@ class QuickTestConfig(TrainingConfig):
     max_train_samples: int = 1000
     max_eval_samples: int = 100
     per_device_train_batch_size: int = 4
-    per_device_eval_batch_size: int = 2
+    per_device_eval_batch_size: int = 4
     run_name: str = "whisper-dutch-quick-test"
 
 
@@ -85,11 +85,12 @@ class ProductionConfig(TrainingConfig):
     """Production configuration with optimized parameters"""
 
     max_steps: int = 4500  # ~3 epochs for 90k samples (effective batch size 64)
-    eval_steps: int = 750   # Evaluate ~6 times per epoch
-    save_steps: int = 750   # Save ~6 times per epoch
+    eval_steps: int = 750  # Evaluate ~6 times per epoch
+    save_steps: int = 750  # Save ~6 times per epoch
     learning_rate: float = 5e-6
     warmup_steps: int = 700  # ~15% of max_steps
     per_device_train_batch_size: int = 32
+    per_device_eval_batch_size: int = 16
     gradient_accumulation_steps: int = 2
     run_name: str = "whisper-dutch-production"
 

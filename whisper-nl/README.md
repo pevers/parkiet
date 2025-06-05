@@ -55,3 +55,35 @@ Processing files: 100%|███████████████████
 2025-06-04 20:17:17,564 - INFO - Failed files: 0
 2025-06-04 20:17:17,583 - INFO - Total audio duration: 783.74 hours
 ```
+
+## Evaluation
+
+File: `../collector/test/nl_stutter.mp3`
+
+```
+Ja, dat is niet zo makkelijk uit te leggen, zeg maar, weet je?
+```
+
+whisper-nl-small:
+
+```
+ja uh d dat is niet zo makkelijk uh uit te leggen uh zeg maar weet je
+```
+
+It even guessed the short stutter 'd' correctly.
+
+File: `../collector/test/nl_laughter.mp3`
+
+whisper-nl-small:
+
+```
+ok ja moet je me meer over vertellen (lacht) dat was een ongemakkelijke lach
+```
+
+🚀 OH YEAH!
+
+Even the acknowledgements are handled nicely!
+
+```
+... vind dat toch altijd 't leukste wat er is mm-hu en helemaal als er als er iets aan 't doen zijn met 't dier waardoor die nog efficinter wordt mm-hu
+```

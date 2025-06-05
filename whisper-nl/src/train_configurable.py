@@ -6,9 +6,11 @@ Configurable Whisper Fine-tuning Script for Dutch/Flemish CGN Data
 import json
 import logging
 import argparse
-import gc  # Add garbage collection
+import gc
+import re
 from pathlib import Path
 from typing import Dict, List, Any
+import regex
 import torch
 from datasets import Dataset, DatasetDict, Audio
 from transformers import (
@@ -19,7 +21,10 @@ from transformers import (
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
 )
-from transformers.models.whisper.english_normalizer import BasicTextNormalizer
+from transformers.models.whisper.english_normalizer import (
+    remove_symbols_and_diacritics,
+    remove_symbols,
+)
 import evaluate
 
 from config import TrainingConfig, QuickTestConfig, ProductionConfig, LowMemoryConfig
@@ -29,6 +34,30 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+
+class BasicTextNormalizer:
+    """Similar to the default one but with parentheses removal to keep speech events like (lacht)"""
+
+    def __init__(self, remove_diacritics: bool = False, split_letters: bool = False):
+        self.clean = (
+            remove_symbols_and_diacritics if remove_diacritics else remove_symbols
+        )
+        self.split_letters = split_letters
+
+    def __call__(self, s: str):
+        s = s.lower()
+        s = re.sub(r"[<\[][^>\]]*[>\]]", "", s)  # remove words between brackets
+        s = self.clean(s).lower()
+
+        if self.split_letters:
+            s = " ".join(regex.findall(r"\X", s, regex.U))
+
+        s = re.sub(
+            r"\s+", " ", s
+        )  # replace any successive whitespace characters with a space
+
+        return s
 
 
 class WhisperDataCollator:
@@ -51,8 +80,7 @@ class WhisperDataCollator:
 
         # Pad label features with explicit padding token
         labels_batch = self.processor.tokenizer.pad(
-            [{"input_ids": feature} for feature in label_features],
-            return_tensors="pt"
+            [{"input_ids": feature} for feature in label_features], return_tensors="pt"
         )
 
         # Replace padding with -100 to ignore in loss calculation
@@ -110,9 +138,11 @@ class ConfigurableWhisperTrainer:
             language=self.config.language,
             task=self.config.task,
         )
-        
+
         # Ensure forced_decoder_ids are properly cleared in processor
-        self.processor.tokenizer.set_prefix_tokens(language=self.config.language, task=self.config.task)
+        self.processor.tokenizer.set_prefix_tokens(
+            language=self.config.language, task=self.config.task
+        )
 
         # Load model
         self.model = WhisperForConditionalGeneration.from_pretrained(
@@ -123,13 +153,12 @@ class ConfigurableWhisperTrainer:
         if len(self.tokenizer) > self.model.config.vocab_size:
             self.model.resize_token_embeddings(len(self.tokenizer))
 
-        # Model configuration - clear forced decoder IDs completely
+        # Model configuration
         self.model.generation_config.forced_decoder_ids = None
         self.model.generation_config.suppress_tokens = []
         self.model.generation_config.language = self.config.language
         self.model.generation_config.task = self.config.task
-        self.model.config.forced_decoder_ids = None
-        
+
         # Disable caching when gradient checkpointing is enabled
         if self.config.gradient_checkpointing:
             self.model.config.use_cache = False
@@ -232,7 +261,36 @@ class ConfigurableWhisperTrainer:
             if cache_path.exists():
                 logger.info(f"Loading preprocessed dataset from cache: {cache_path}")
                 try:
-                    return DatasetDict.load_from_disk(str(cache_path))
+                    cached_dataset = DatasetDict.load_from_disk(str(cache_path))
+
+                    # Apply sample limits to cached dataset
+                    if (
+                        self.config.max_train_samples
+                        and len(cached_dataset["train"]) > self.config.max_train_samples
+                    ):
+                        cached_dataset["train"] = cached_dataset["train"].select(
+                            range(self.config.max_train_samples)
+                        )
+                        logger.info(
+                            f"Limited train dataset to {self.config.max_train_samples} samples"
+                        )
+
+                    if (
+                        self.config.max_eval_samples
+                        and len(cached_dataset["validation"])
+                        > self.config.max_eval_samples
+                    ):
+                        cached_dataset["validation"] = cached_dataset[
+                            "validation"
+                        ].select(range(self.config.max_eval_samples))
+                        logger.info(
+                            f"Limited validation dataset to {self.config.max_eval_samples} samples"
+                        )
+
+                    logger.info(
+                        f"Using cached dataset - Train: {len(cached_dataset['train'])}, Validation: {len(cached_dataset['validation'])}"
+                    )
+                    return cached_dataset
                 except Exception as e:
                     logger.warning(
                         f"Failed to load cache: {e}. Proceeding with preprocessing..."
@@ -413,9 +471,7 @@ def main():
     parser.add_argument(
         "--max-eval-samples", type=int, help="Limit number of evaluation samples"
     )
-    parser.add_argument(
-        "--run-name", type=str, help="Custom name for TensorBoard run"
-    )
+    parser.add_argument("--run-name", type=str, help="Custom name for TensorBoard run")
 
     args = parser.parse_args()
 
