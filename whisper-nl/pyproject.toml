@@ -14,3 +14,8 @@ dependencies = [
     "tensorboard>=2.19.0",
     "transformers[torch]>=4.52.4",
 ]
+
+[tool.uv]
+dev-dependencies = [
+    "ruff>=0.11.12",
+]
