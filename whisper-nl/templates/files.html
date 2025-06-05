@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}CGN Corpus Inspector - {{ component.upper() }} {{ language.upper() }}{% endblock %}
+
+{% block header %}{{ component.upper() }} - {{ language.upper() }} Files{% endblock %}
+
+{% block breadcrumb %}
+<nav class="breadcrumb">
+    <a href="/">Home</a> &gt; 
+    <a href="/component/{{ component }}">{{ component.upper() }}</a> &gt;
+    <span>{{ language.upper() }}</span>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Audio Files in {{ component.upper() }} - {{ language.upper() }}</h2>
+    <p>
+        {% if language == 'nl' %}
+            Dutch audio recordings from component {{ component }}
+        {% elif language == 'vl' %}
+            Flemish audio recordings from component {{ component }}
+        {% else %}
+            {{ language }} audio recordings from component {{ component }}
+        {% endif %}
+    </p>
+</div>
+
+<div class="stats">
+    <div class="stat">
+        <div class="stat-number">{{ audio_files|length }}</div>
+        <div class="stat-label">Audio Files</div>
+    </div>
+    <div class="stat">
+        <div class="stat-number">{{ audio_files|selectattr("has_annotation")|list|length }}</div>
+        <div class="stat-label">With Annotations</div>
+    </div>
+    <div class="stat">
+        <div class="stat-number">{{ (audio_files|selectattr("has_annotation")|list|length / audio_files|length * 100)|round(1) if audio_files|length > 0 else 0 }}%</div>
+        <div class="stat-label">Coverage</div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Audio Files</h3>
+    {% for file in audio_files %}
+    <div class="file-item">
+        <div>
+            <div class="file-name">{{ file.filename }}</div>
+            <small style="color: #666;">{{ file.full_path }}</small>
+        </div>
+        <div class="file-actions">
+            {% if file.has_annotation %}
+                <a href="/view/{{ component }}/{{ language }}/{{ file.filename }}" class="btn btn-small btn-success">View Annotation</a>
+                <a href="/annotation/{{ component }}/{{ language }}/{{ file.filename }}" class="btn btn-small">JSON API</a>
+            {% else %}
+                <a href="/view/{{ component }}/{{ language }}/{{ file.filename }}" class="btn btn-small">View Audio</a>
+                <span class="btn btn-small btn-warning" style="cursor: not-allowed;">No Annotation</span>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{% if not audio_files %}
+<div class="card">
+    <h3>No Audio Files Found</h3>
+    <p>No .wav files found in {{ component }}/{{ language }}.</p>
+    <a href="/component/{{ component }}" class="btn">Back to Component</a>
+</div>
+{% endif %}
+{% endblock %} 

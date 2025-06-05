@@ -10,9 +10,9 @@ import uvicorn
 app = FastAPI(title="Prompts Viewer")
 
 # Mount static files for serving audio files
-app.mount("/audio", StaticFiles(directory="data/prompts"), name="audio")
+app.mount("/audio", StaticFiles(directory="../data/prompts"), name="audio")
 
-PROMPTS_DIR = Path("data/prompts")
+PROMPTS_DIR = Path("../data/prompts")
 
 
 def get_emotion_emoji(emotion: str) -> str:

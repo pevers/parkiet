@@ -1,0 +1,16 @@
+[project]
+name = "whisper-nl"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "accelerate>=1.7.0",
+    "datasets[audio]>=3.6.0",
+    "evaluate>=0.4.3",
+    "fastapi[standard]>=0.115.12",
+    "gradio>=5.3.0",
+    "jiwer>=3.1.0",
+    "tensorboard>=2.19.0",
+    "transformers[torch]>=4.52.4",
+]

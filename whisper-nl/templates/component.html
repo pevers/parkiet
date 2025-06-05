@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+
+{% block title %}CGN Corpus Inspector - {{ component.upper() }}{% endblock %}
+
+{% block header %}{{ component.upper() }} Component{% endblock %}
+
+{% block breadcrumb %}
+<nav class="breadcrumb">
+    <a href="/">Home</a> &gt; 
+    <span>{{ component.upper() }}</span>
+</nav>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>{{ component.upper() }} Component</h2>
+    <p>Select a language variant to browse the audio files and their annotations.</p>
+</div>
+
+<div class="stats">
+    <div class="stat">
+        <div class="stat-number">{{ languages|length }}</div>
+        <div class="stat-label">Language Variants</div>
+    </div>
+</div>
+
+<h2>Available Language Variants</h2>
+<div class="grid">
+    {% for language in languages %}
+    <div class="card">
+        <h3>
+            {% if language == 'nl' %}
+                🇳🇱 Dutch (nl)
+            {% elif language == 'vl' %}
+                🇧🇪 Flemish (vl)
+            {% else %}
+                {{ language.upper() }}
+            {% endif %}
+        </h3>
+        <p>Browse {{ language }} audio files and annotations in {{ component }}</p>
+        <a href="/component/{{ component }}/{{ language }}" class="btn">Browse Files</a>
+    </div>
+    {% endfor %}
+</div>
+
+{% if not languages %}
+<div class="card">
+    <h3>No Language Variants Found</h3>
+    <p>No language folders (nl/vl) found for component {{ component }}.</p>
+    <a href="/" class="btn">Back to Home</a>
+</div>
+{% endif %}
+{% endblock %} 

@@ -210,7 +210,7 @@ if __name__ == "__main__":
             f"Usage: python {sys.argv[0]} <chunks_folder> <original_audio_path> <output_folder>"
         )
         print(
-            "Example: python src/sample_generator.py data/chunks/podcast_name/ data/podcasts/podcast_name.mp3 output/samples/"
+            "Example: python src/sample_generator.py ../data/chunks/podcast_name/ ../data/podcasts/podcast_name.mp3 output/samples/"
         )
         sys.exit(1)
 

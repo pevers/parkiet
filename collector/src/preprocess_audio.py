@@ -273,7 +273,7 @@ def preprocess_audio(audio_path: str, output_name: str) -> None:
         raise FileNotFoundError(f"Audio file not found: {audio_file_path}")
 
     # Create output directory
-    output_dir = Path("data/chunks") / output_name
+    output_dir = Path("../data/chunks") / output_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Processing audio file: {audio_file_path}")
@@ -316,7 +316,7 @@ if __name__ == "__main__":
     if len(sys.argv) != 3:
         print(f"Usage: python {sys.argv[0]} <audio_path> <output_name>")
         print(
-            "Example: python src/preprocess_audio.py data/podcasts/episode1.mp3 episode1"
+            "Example: python src/preprocess_audio.py ../data/podcasts/episode1.mp3 episode1"
         )
         sys.exit(1)
 

@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class ParelRadioScraper:
-    def __init__(self, output_dir: str = "data/hoorspelen/Parel Radio"):
+    def __init__(self, output_dir: str = "../data/hoorspelen/Parel Radio"):
         self.base_url = "https://www.nporadio1.nl/podcasts/parel-radio"
         self.output_dir = output_dir
         self.session = requests.Session()
@@ -340,7 +340,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="data/hoorspelen/Parel Radio",
+        default="../data/hoorspelen/Parel Radio",
         help="Output directory for data and downloads",
     )
 

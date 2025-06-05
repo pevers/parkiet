@@ -244,7 +244,7 @@ def download_episodes(feed_url, title):
             print(f"Already in Azure: {blob_path}, skipping local download.")
             continue
         # Download locally if not in Azure
-        local_dir = os.path.join("data", "podcasts", title)
+        local_dir = os.path.join("../data", "podcasts", title)
         os.makedirs(local_dir, exist_ok=True)
         local_path = os.path.join(local_dir, f"{safe_title}.mp3")
         if os.path.exists(local_path):
