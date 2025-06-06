@@ -14,8 +14,8 @@ inaudible markers ("xxx") to create cleaner training data:
 7. Saves processed data to ../data/training
 """
 
-import os
 import gzip
+import argparse
 import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -24,7 +24,7 @@ import subprocess
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
-import re
+import html
 
 # Configure logging
 logging.basicConfig(
@@ -40,6 +40,9 @@ class CGNProcessorClean:
         self.base_dir = Path("../data/CGN_2.0.3")
         self.audio_dir = self.base_dir / "data/audio/wav"
         self.annot_dir = self.base_dir / "data/annot/xml/skp-ort"
+        self.pri_dir = (
+            self.base_dir / "data/annot/xml/pri"
+        )  # Add PRI directory for punctuation
         self.output_dir = Path("../data/training")
 
         # Create output directory
@@ -68,6 +71,7 @@ class CGNProcessorClean:
             "total_inaudible_words": 0,
             "total_laughter_words": 0,
             "total_words": 0,
+            "punctuation_added": 0,
         }
 
         logger.info(f"Initialized CGN processor")
@@ -75,6 +79,7 @@ class CGNProcessorClean:
         logger.info(f"Max inaudible ratio: {self.max_inaudible_ratio}")
         logger.info(f"Audio dir: {self.audio_dir}")
         logger.info(f"Annotation dir: {self.annot_dir}")
+        logger.info(f"PRI dir: {self.pri_dir}")
         logger.info(f"Output dir: {self.output_dir}")
 
     def is_inaudible_word(self, word: str) -> bool:
@@ -127,73 +132,219 @@ class CGNProcessorClean:
         # Keep only non-empty words
         return cleaned if cleaned else None
 
-    def clean_text(self, words: List[str]) -> Tuple[str, float]:
+    def _preprocess_xml_entities(self, content: str) -> str:
         """
-        Clean text by removing inaudible markers and converting laughter
+        Preprocess XML content to handle HTML entities that XML parser doesn't recognize.
+        This converts HTML entities to their Unicode equivalents while preserving XML structure.
+        """
+        # Common HTML entities found in CGN corpus that XML parser doesn't handle
+        html_entities = {
+            "&eacute;": "é",
+            "&Eacute;": "É",
+            "&egrave;": "è",
+            "&Egrave;": "È",
+            "&ecirc;": "ê",
+            "&Ecirc;": "Ê",
+            "&euml;": "ë",
+            "&Euml;": "Ë",
+            "&aacute;": "á",
+            "&Aacute;": "Á",
+            "&agrave;": "à",
+            "&Agrave;": "À",
+            "&acirc;": "â",
+            "&Acirc;": "Â",
+            "&auml;": "ä",
+            "&Auml;": "Ä",
+            "&atilde;": "ã",
+            "&Atilde;": "Ã",
+            "&iacute;": "í",
+            "&Iacute;": "Í",
+            "&igrave;": "ì",
+            "&Igrave;": "Ì",
+            "&icirc;": "î",
+            "&Icirc;": "Î",
+            "&iuml;": "ï",
+            "&Iuml;": "Ï",
+            "&oacute;": "ó",
+            "&Oacute;": "Ó",
+            "&ograve;": "ò",
+            "&Ograve;": "Ò",
+            "&ocirc;": "ô",
+            "&Ocirc;": "Ô",
+            "&ouml;": "ö",
+            "&Ouml;": "Ö",
+            "&uacute;": "ú",
+            "&Uacute;": "Ú",
+            "&ugrave;": "ù",
+            "&Ugrave;": "Ù",
+            "&ucirc;": "û",
+            "&Ucirc;": "Û",
+            "&uuml;": "ü",
+            "&Uuml;": "Ü",
+            "&ccedil;": "ç",
+            "&Ccedil;": "Ç",
+            "&ntilde;": "ñ",
+            "&Ntilde;": "Ñ",
+            "&nbsp;": " ",
+            "&ndash;": "–",
+            "&mdash;": "—",
+            "&lsquo;": """,
+            '&rsquo;': """,
+            "&ldquo;": '"',
+            "&rdquo;": '"',
+            "&hellip;": "…",
+            "&trade;": "™",
+            "&copy;": "©",
+            "&reg;": "®",
+            "&oslash;": "ø",
+            "&Oslash;": "Ø",
+        }
+
+        # Replace HTML entities with Unicode equivalents
+        for entity, replacement in html_entities.items():
+            content = content.replace(entity, replacement)
+
+        return content
+
+    def clean_text(self, word_data_list: List[Dict]) -> Tuple[str, float]:
+        """
+        Clean text by removing inaudible markers and converting laughter, including punctuation
         Returns: (cleaned_text, inaudible_ratio)
         """
-        total_words = len(words)
+        total_words = len(word_data_list)
         if total_words == 0:
             return "", 0.0
 
-        cleaned_words = []
+        cleaned_parts = []
         inaudible_count = 0
         laughter_count = 0
+        punctuation_added = 0
 
-        for word in words:
+        for word_data in word_data_list:
+            word = (
+                word_data.get("word", "") if isinstance(word_data, dict) else word_data
+            )
+            punctuation = (
+                word_data.get("punctuation", "") if isinstance(word_data, dict) else ""
+            )
+
             if self.is_laughter_word(word):
                 laughter_count += 1
-                cleaned_words.append("(lacht)")
+                cleaned_parts.append("(lacht)")
             elif self.is_inaudible_word(word):
                 inaudible_count += 1
+                # Don't add the word, but still add punctuation if present
+                if punctuation:
+                    # Add punctuation to the previous word if it exists
+                    if cleaned_parts:
+                        cleaned_parts[-1] += punctuation
+                        punctuation_added += 1
+                continue
             else:
                 cleaned_word = self.clean_word(word)
                 if cleaned_word:
-                    cleaned_words.append(cleaned_word)
+                    # Add the word with punctuation if present
+                    if punctuation:
+                        cleaned_parts.append(cleaned_word + punctuation)
+                        punctuation_added += 1
+                    else:
+                        cleaned_parts.append(cleaned_word)
+
+        # Update punctuation statistics
+        self.stats["punctuation_added"] += punctuation_added
 
         inaudible_ratio = inaudible_count / total_words if total_words > 0 else 0
-        cleaned_text = " ".join(cleaned_words)
+        cleaned_text = " ".join(cleaned_parts)
 
         return cleaned_text, inaudible_ratio
 
-    def parse_xml_annotation(self, xml_file: Path) -> List[Dict]:
-        """Parse CGN XML annotation file and extract word-level timestamps"""
-        try:
-            with gzip.open(xml_file, "rt", encoding="utf-8") as f:
-                content = f.read()
+    def parse_pri_file(self, pri_file: Path) -> Dict[str, str]:
+        """Parse PRI file to extract punctuation marks mapped by word ID"""
+        punctuation_map = {}
 
-            root = ET.fromstring(content)
-            words = []
+        with gzip.open(pri_file, "rt", encoding="utf-8") as f:
+            content = f.read()
 
-            # Extract all word elements with timestamps
-            for tau in root.findall(".//tau"):
-                speaker = tau.get("s", "")
-                for tw in tau.findall(".//tw"):
-                    word_text = tw.get("w", "")
+        # Parse XML first, then unescape individual text values
+        content = self._preprocess_xml_entities(content)
+        root = ET.fromstring(content)
 
-                    # Skip empty words
-                    if not word_text.strip():
+        # Extract punctuation marks from <l> tags
+        for l_tag in root.findall(".//l"):
+            punct_id = l_tag.get("id", "")
+            punct_text = l_tag.text.strip() if l_tag.text else ""
+
+            if punct_id and punct_text:
+                # Decode HTML entities in punctuation text
+                punct_text = html.unescape(punct_text)
+
+                # Extract the word position from punctuation ID
+                # e.g., "fn000248.1.19" -> "fn000248.1.18" (previous word)
+                parts = punct_id.split(".")
+                if len(parts) >= 3:
+                    try:
+                        word_num = (
+                            int(parts[-1]) - 1
+                        )  # Punctuation follows previous word
+                        if word_num > 0:
+                            word_id = ".".join(parts[:-1] + [str(word_num)])
+                            punctuation_map[word_id] = punct_text
+                    except ValueError:
                         continue
 
-                    word_data = {
-                        "word": word_text,
-                        "start": float(tw.get("tb", 0)),
-                        "end": float(tw.get("te", 0)),
-                        "speaker": speaker,
-                        "is_inaudible": self.is_inaudible_word(word_text),
-                        "is_laughter": self.is_laughter_word(word_text),
-                    }
-                    words.append(word_data)
+        return punctuation_map
 
-            # Sort by start time
-            words.sort(key=lambda x: x["start"])
-            return words
+    def parse_xml_annotation(self, xml_file: Path, pri_file: Path = None) -> List[Dict]:
+        """Parse CGN XML annotation file and extract word-level timestamps"""
 
-        except Exception as e:
-            logger.error(f"Error parsing {xml_file}: {e}")
-            return []
+        with gzip.open(xml_file, "rt", encoding="utf-8") as f:
+            content = f.read()
 
-    def create_chunks(self, words: List[Dict], audio_duration: float) -> List[Dict]:
+        # Handle HTML entities that XML parser doesn't recognize
+        content = self._preprocess_xml_entities(content)
+        # Parse XML first, then unescape individual text values
+        root = ET.fromstring(content)
+        words = []
+
+        # Parse punctuation from PRI file if available
+        punctuation_map = {}
+        if pri_file and pri_file.exists():
+            punctuation_map = self.parse_pri_file(pri_file)
+
+        # Extract all word elements with timestamps
+        for tau in root.findall(".//tau"):
+            speaker = tau.get("s", "")
+            for tw in tau.findall(".//tw"):
+                word_text = tw.get("w", "")
+                word_id = tw.get("ref", "")
+
+                # Skip empty words
+                if not word_text.strip():
+                    continue
+
+                # Clean up whitespace and decode HTML entities in the word text
+                word_text = html.unescape(word_text.strip())
+
+                # Check if this word has punctuation following it
+                punctuation = punctuation_map.get(word_id, "")
+
+                word_data = {
+                    "word": word_text,
+                    "start": float(tw.get("tb", 0)),
+                    "end": float(tw.get("te", 0)),
+                    "speaker": speaker,
+                    "is_inaudible": self.is_inaudible_word(word_text),
+                    "is_laughter": self.is_laughter_word(word_text),
+                    "punctuation": punctuation,  # Add punctuation info
+                    "word_id": word_id,  # Keep word ID for debugging
+                }
+                words.append(word_data)
+
+        # Sort by start time
+        words.sort(key=lambda x: x["start"])
+        return words
+
+    def create_chunks(self, words: List[Dict]) -> List[Dict]:
         """Create audio chunks respecting word boundaries and filtering inaudible content"""
         if not words:
             return []
@@ -237,12 +388,12 @@ class CGNProcessorClean:
 
     def _finalize_chunk(self, chunk_data: Dict) -> Optional[Dict]:
         """Finalize a chunk by cleaning text and applying filters"""
-        words = [w["word"] for w in chunk_data["words"]]
-        cleaned_text, inaudible_ratio = self.clean_text(words)
+        # Pass the full word data (including punctuation) to clean_text
+        cleaned_text, inaudible_ratio = self.clean_text(chunk_data["words"])
 
         # Update statistics
         self.stats["total_chunks_before_filtering"] += 1
-        self.stats["total_words"] += len(words)
+        self.stats["total_words"] += len(chunk_data["words"])
         self.stats["total_inaudible_words"] += sum(
             1 for w in chunk_data["words"] if w["is_inaudible"]
         )
@@ -333,8 +484,11 @@ class CGNProcessorClean:
         file_id = audio_file.stem
         logger.info(f"Processing {component}/{region}/{file_id}")
 
-        # Parse annotation
-        words = self.parse_xml_annotation(annotation_file)
+        # Find corresponding PRI file for punctuation
+        pri_file = self.pri_dir / component / region / f"{file_id}.pri.gz"
+
+        # Parse annotation with punctuation
+        words = self.parse_xml_annotation(annotation_file, pri_file)
         if not words:
             logger.warning(f"No words found in {annotation_file}")
             return []
@@ -346,7 +500,7 @@ class CGNProcessorClean:
             return []
 
         # Create chunks
-        chunks = self.create_chunks(words, audio_duration)
+        chunks = self.create_chunks(words)
         if not chunks:
             logger.warning(f"No valid chunks created for {file_id}")
             return []
@@ -464,6 +618,9 @@ class CGNProcessorClean:
                     logger.error(f"Failed to process {audio_file}: {e}")
                     failed_files.append(str(audio_file))
 
+                    # Exit, we want to parse everything without silently failing
+                    exit(1)
+
         # Save metadata
         self.save_metadata(all_chunks, failed_files)
 
@@ -499,6 +656,7 @@ class CGNProcessorClean:
         logger.info(f"Total words processed: {self.stats['total_words']}")
         logger.info(f"Inaudible words removed: {self.stats['total_inaudible_words']}")
         logger.info(f"Laughter words converted: {self.stats['total_laughter_words']}")
+        logger.info(f"Punctuation marks added: {self.stats['punctuation_added']}")
 
         if self.stats["total_words"] > 0:
             inaudible_pct = (
@@ -507,8 +665,12 @@ class CGNProcessorClean:
             laughter_pct = (
                 self.stats["total_laughter_words"] / self.stats["total_words"] * 100
             )
+            punctuation_pct = (
+                self.stats["punctuation_added"] / self.stats["total_words"] * 100
+            )
             logger.info(f"Inaudible word ratio: {inaudible_pct:.1f}%")
             logger.info(f"Laughter word ratio: {laughter_pct:.1f}%")
+            logger.info(f"Punctuation ratio: {punctuation_pct:.1f}%")
 
         if final_chunks:
             avg_inaudible_ratio = sum(
@@ -582,9 +744,6 @@ class CGNProcessorClean:
 
 
 def main():
-    """Main processing function"""
-    import argparse
-
     parser = argparse.ArgumentParser(
         description="Process CGN data with inaudible filtering"
     )

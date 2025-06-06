@@ -3,7 +3,6 @@
 Script to print default suppress tokens from Whisper tokenizer
 """
 
-import torch
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 import argparse
 
@@ -102,10 +101,8 @@ def print_suppress_tokens(model_name="openai/whisper-small", language="dutch"):
 
     if non_speech_events:
         print(f"\nNon-speech events found: {len(non_speech_events)}")
-        for token_id, decoded in non_speech_events[:10]:  # Show first 10
+        for token_id, decoded in non_speech_events:
             print(f"  {token_id}: {repr(decoded)}")
-        if len(non_speech_events) > 10:
-            print(f"  ... and {len(non_speech_events) - 10} more")
 
     if fillers:
         print(f"\nFiller words found: {len(fillers)}")
@@ -114,10 +111,8 @@ def print_suppress_tokens(model_name="openai/whisper-small", language="dutch"):
 
     if punctuation:
         print(f"\nPunctuation/symbols found: {len(punctuation)}")
-        for token_id, decoded in punctuation[:10]:  # Show first 10
+        for token_id, decoded in punctuation:
             print(f"  {token_id}: {repr(decoded)}")
-        if len(punctuation) > 10:
-            print(f"  ... and {len(punctuation) - 10} more")
 
     # Show some special tokens for context
     print(f"\nSPECIAL TOKENS FOR REFERENCE:")

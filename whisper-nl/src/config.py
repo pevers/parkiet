@@ -26,6 +26,7 @@ class TrainingConfig:
     max_train_samples: Optional[int] = None
     max_eval_samples: Optional[int] = None
     preprocessed_cache_dir: Optional[str] = "../data/training/.cache/preprocessed"
+    dataset_seed: int = 1337
 
     # Training hyperparameters
     output_dir: str = "./whisper-small-dutch-cgn"

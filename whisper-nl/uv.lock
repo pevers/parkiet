@@ -2212,6 +2212,7 @@ dependencies = [
     { name = "gradio" },
     { name = "jiwer" },
     { name = "tensorboard" },
+    { name = "tqdm" },
     { name = "transformers", extra = ["torch"] },
 ]
 
@@ -2229,6 +2230,7 @@ requires-dist = [
     { name = "gradio", specifier = ">=5.3.0" },
     { name = "jiwer", specifier = ">=3.1.0" },
     { name = "tensorboard", specifier = ">=2.19.0" },
+    { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformers", extras = ["torch"], specifier = ">=4.52.4" },
 ]
 

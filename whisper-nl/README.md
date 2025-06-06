@@ -31,29 +31,26 @@ Docs: https://taalmaterialen.ivdnt.org/wp-content/uploads/documentatie/cgn_overh
 ### Data Extraction
 
 ```
-Processing files: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 12780/12780 [25:53<00:00,  8.23it/s]
-2025-06-04 20:17:17,476 - INFO - Metadata saved to ../data/training/metadata.json
-2025-06-04 20:17:17,476 - INFO - Whisper dataset saved to ../data/training/whisper_dataset.json
-2025-06-04 20:17:17,476 - INFO - CSV dataset saved to ../data/training/dataset.csv
-2025-06-04 20:17:17,488 - INFO - === Processing Statistics ===
-2025-06-04 20:17:17,488 - INFO - Total chunks before filtering: 104355
-2025-06-04 20:17:17,488 - INFO - Chunks with inaudible words: 29693
-2025-06-04 20:17:17,488 - INFO - Chunks filtered out: 11
-2025-06-04 20:17:17,488 - INFO - Final chunks: 104344
-2025-06-04 20:17:17,488 - INFO - Retention rate: 100.0%
-2025-06-04 20:17:17,488 - INFO - Total words processed: 8960832
-2025-06-04 20:17:17,488 - INFO - Inaudible words removed: 53398
-2025-06-04 20:17:17,488 - INFO - Laughter words converted: 66019
-2025-06-04 20:17:17,488 - INFO - Inaudible word ratio: 0.6%
-2025-06-04 20:17:17,488 - INFO - Laughter word ratio: 0.7%
-2025-06-04 20:17:17,564 - INFO - Average inaudible ratio in kept chunks: 0.6%
-2025-06-04 20:17:17,564 - INFO - Average chunk duration: 27.0s
-2025-06-04 20:17:17,564 - INFO - Average words per chunk: 85.4
-2025-06-04 20:17:17,564 - INFO - Average laughter instances per chunk: 0.6
-2025-06-04 20:17:17,564 - INFO - Processing complete!
-2025-06-04 20:17:17,564 - INFO - Total chunks created: 104344
-2025-06-04 20:17:17,564 - INFO - Failed files: 0
-2025-06-04 20:17:17,583 - INFO - Total audio duration: 783.74 hours
+Processing files: 100%|2025-06-06 09:05:20,663 - INFO - Total chunks before filtering: 104355
+2025-06-06 09:05:20,663 - INFO - Chunks with inaudible words: 29693
+2025-06-06 09:05:20,663 - INFO - Chunks filtered out: 11
+2025-06-06 09:05:20,663 - INFO - Final chunks: 104344
+2025-06-06 09:05:20,663 - INFO - Retention rate: 100.0%
+2025-06-06 09:05:20,663 - INFO - Total words processed: 8960832
+2025-06-06 09:05:20,663 - INFO - Inaudible words removed: 53398
+2025-06-06 09:05:20,663 - INFO - Laughter words converted: 66019
+2025-06-06 09:05:20,663 - INFO - Punctuation marks added: 0
+2025-06-06 09:05:20,663 - INFO - Inaudible word ratio: 0.6%
+2025-06-06 09:05:20,663 - INFO - Laughter word ratio: 0.7%
+2025-06-06 09:05:20,663 - INFO - Punctuation ratio: 0.0%
+2025-06-06 09:05:20,744 - INFO - Average inaudible ratio in kept chunks: 0.6%
+2025-06-06 09:05:20,744 - INFO - Average chunk duration: 27.0s
+2025-06-06 09:05:20,744 - INFO - Average words per chunk: 85.4
+2025-06-06 09:05:20,744 - INFO - Average laughter instances per chunk: 0.6
+2025-06-06 09:05:20,744 - INFO - Processing complete!
+2025-06-06 09:05:20,744 - INFO - Total chunks created: 104344
+2025-06-06 09:05:20,744 - INFO - Failed files: 0
+2025-06-06 09:05:20,766 - INFO - Total audio duration: 783.74 hours
 ```
 
 ## Evaluation

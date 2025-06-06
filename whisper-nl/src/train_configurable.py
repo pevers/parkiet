@@ -3,16 +3,12 @@
 Configurable Whisper Fine-tuning Script for Dutch/Flemish CGN Data
 """
 
-import json
 import logging
 import argparse
-import gc
-import re
-from pathlib import Path
 from typing import Dict, List, Any
 import regex
 import torch
-from datasets import Dataset, DatasetDict, Audio
+from datasets import DatasetDict
 from transformers import (
     WhisperFeatureExtractor,
     WhisperTokenizer,
@@ -21,43 +17,17 @@ from transformers import (
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
 )
-from transformers.models.whisper.english_normalizer import (
-    remove_symbols_and_diacritics,
-    remove_symbols,
-)
 import evaluate
 
 from config import TrainingConfig, QuickTestConfig, ProductionConfig, LowMemoryConfig
+from text_normalizer import BasicTextNormalizer
+from dataset_loader import DatasetLoader
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
-
-
-class BasicTextNormalizer:
-    """Similar to the default one but with parentheses removal to keep speech events like (lacht)"""
-
-    def __init__(self, remove_diacritics: bool = False, split_letters: bool = False):
-        self.clean = (
-            remove_symbols_and_diacritics if remove_diacritics else remove_symbols
-        )
-        self.split_letters = split_letters
-
-    def __call__(self, s: str):
-        s = s.lower()
-        s = re.sub(r"[<\[][^>\]]*[>\]]", "", s)  # remove words between brackets
-        s = self.clean(s).lower()
-
-        if self.split_letters:
-            s = " ".join(regex.findall(r"\X", s, regex.U))
-
-        s = re.sub(
-            r"\s+", " ", s
-        )  # replace any successive whitespace characters with a space
-
-        return s
 
 
 class WhisperDataCollator:
@@ -176,125 +146,31 @@ class ConfigurableWhisperTrainer:
         logger.info("Model and processor loaded successfully")
 
     def load_dataset(self) -> DatasetDict:
-        """Load and prepare the CGN dataset"""
-        dataset_path = Path(self.config.dataset_path)
-        whisper_dataset_file = dataset_path / self.config.dataset_file
-
-        if not whisper_dataset_file.exists():
-            raise FileNotFoundError(f"Dataset file not found: {whisper_dataset_file}")
-
-        logger.info(f"Loading dataset from {whisper_dataset_file}")
-
-        # Load the JSON data
-        with open(whisper_dataset_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        # Convert relative paths to absolute paths
-        for item in data:
-            audio_path = dataset_path / item["audio"]
-            if not audio_path.exists():
-                logger.warning(f"Audio file not found: {audio_path}")
-            item["audio"] = str(audio_path)
-
-        # Filter out items with missing audio files
-        data = [item for item in data if Path(item["audio"]).exists()]
-        logger.info(f"Loaded {len(data)} valid audio samples")
-
-        # Create dataset
-        dataset = Dataset.from_list(data)
-
-        # Cast audio column
-        dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
-
-        # Filter by duration
-        def filter_by_duration(batch):
-            durations = []
-            for audio in batch["audio"]:
-                duration = len(audio["array"]) / audio["sampling_rate"]
-                durations.append(
-                    self.config.min_duration_seconds
-                    <= duration
-                    <= self.config.max_duration_seconds
-                )
-            return durations
-
-        dataset = dataset.filter(filter_by_duration, batched=True, batch_size=100)
-        logger.info(f"After duration filtering: {len(dataset)} samples")
-
-        # Split dataset
-        train_size = int(0.9 * len(dataset))
-        eval_size = len(dataset) - train_size
-
-        dataset_dict = dataset.train_test_split(
-            train_size=train_size, test_size=eval_size, seed=1337
+        """Load and prepare the CGN dataset using shared dataset loader"""
+        self.dataset_loader = DatasetLoader(
+            dataset_path=self.config.dataset_path,
+            dataset_file=self.config.dataset_file,
+            min_duration_seconds=self.config.min_duration_seconds,
+            max_duration_seconds=self.config.max_duration_seconds,
+            dataset_seed=self.config.dataset_seed,
+            preprocessed_cache_dir=self.config.preprocessed_cache_dir,
         )
 
-        # Rename splits
-        dataset_dict = DatasetDict(
-            {"train": dataset_dict["train"], "validation": dataset_dict["test"]}
+        return self.dataset_loader.load_dataset_for_training(
+            max_train_samples=self.config.max_train_samples,
+            max_eval_samples=self.config.max_eval_samples,
         )
-
-        # Limit samples if specified
-        if self.config.max_train_samples:
-            dataset_dict["train"] = dataset_dict["train"].select(
-                range(self.config.max_train_samples)
-            )
-
-        if self.config.max_eval_samples:
-            dataset_dict["validation"] = dataset_dict["validation"].select(
-                range(self.config.max_eval_samples)
-            )
-
-        logger.info(
-            f"Final dataset sizes - Train: {len(dataset_dict['train'])}, Validation: {len(dataset_dict['validation'])}"
-        )
-
-        return dataset_dict
 
     def preprocess_dataset(self, dataset_dict: DatasetDict) -> DatasetDict:
         """Preprocess the dataset for training"""
-        logger.info("Preprocessing dataset...")
+        # Check if we can load from cache first
+        cached_dataset = self.dataset_loader.load_preprocessed_dataset(
+            max_train_samples=self.config.max_train_samples,
+            max_eval_samples=self.config.max_eval_samples,
+        )
 
-        # Check if we can load from cache
-        if self.config.preprocessed_cache_dir:
-            cache_path = Path(self.config.preprocessed_cache_dir)
-            if cache_path.exists():
-                logger.info(f"Loading preprocessed dataset from cache: {cache_path}")
-                try:
-                    cached_dataset = DatasetDict.load_from_disk(str(cache_path))
-
-                    # Apply sample limits to cached dataset
-                    if (
-                        self.config.max_train_samples
-                        and len(cached_dataset["train"]) > self.config.max_train_samples
-                    ):
-                        cached_dataset["train"] = cached_dataset["train"].select(
-                            range(self.config.max_train_samples)
-                        )
-                        logger.info(
-                            f"Limited train dataset to {self.config.max_train_samples} samples"
-                        )
-
-                    if (
-                        self.config.max_eval_samples
-                        and len(cached_dataset["validation"])
-                        > self.config.max_eval_samples
-                    ):
-                        cached_dataset["validation"] = cached_dataset[
-                            "validation"
-                        ].select(range(self.config.max_eval_samples))
-                        logger.info(
-                            f"Limited validation dataset to {self.config.max_eval_samples} samples"
-                        )
-
-                    logger.info(
-                        f"Using cached dataset - Train: {len(cached_dataset['train'])}, Validation: {len(cached_dataset['validation'])}"
-                    )
-                    return cached_dataset
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to load cache: {e}. Proceeding with preprocessing..."
-                    )
+        if cached_dataset is not None:
+            return cached_dataset
 
         def prepare_dataset(batch):
             # Load and process audio
@@ -317,39 +193,10 @@ class ConfigurableWhisperTrainer:
 
             return batch
 
-        # Process datasets
-        processed_dataset_dict = DatasetDict()
-
-        for split_name, split_dataset in dataset_dict.items():
-            logger.info(f"Processing {split_name} split...")
-            processed_dataset = split_dataset.map(
-                prepare_dataset,
-                remove_columns=split_dataset.column_names,
-                desc=f"Preprocessing {split_name}",
-                # Use multiple processes for faster preprocessing
-                num_proc=self.config.dataloader_num_workers
-                if self.config.dataloader_num_workers > 1
-                else None,
-                keep_in_memory=False,
-                batch_size=1,
-            )
-            processed_dataset_dict[split_name] = processed_dataset
-
-            # Force garbage collection after processing each split
-            gc.collect()
-
-            logger.info(f"Completed processing {split_name} split")
-
-        # Save preprocessed dataset to cache if specified
-        if self.config.preprocessed_cache_dir:
-            cache_path = Path(self.config.preprocessed_cache_dir)
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Saving preprocessed dataset to cache: {cache_path}")
-            processed_dataset_dict.save_to_disk(str(cache_path))
-
-        gc.collect()
-
-        return processed_dataset_dict
+        # Preprocess and cache dataset using the shared dataset loader
+        return self.dataset_loader.preprocess_dataset(
+            dataset_dict, prepare_dataset, self.config.dataloader_num_workers
+        )
 
     def compute_metrics(self, eval_preds):
         """Compute WER metric"""

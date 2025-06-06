@@ -15,6 +15,17 @@
                 "../collector/test/nl_laughter.mp3"
             ],
             "justMyCode": false
+        },
+        {
+            "name": "Prepare Data",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/prepare_data.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--workers",
+                "1"
+            ]
         }
     ]
 }
