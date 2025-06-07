@@ -80,7 +80,7 @@ class CheckpointEvaluator:
     def load_evaluation_dataset(
         self, dataset_path: str, dataset_file: str, num_samples: int = 10
     ):
-        """Load evaluation dataset and sample random examples using shared dataset loader"""
+        """Load evaluation dataset and sample random examples"""
         dataset_loader = DatasetLoader(
             dataset_path=dataset_path,
             dataset_file=dataset_file,

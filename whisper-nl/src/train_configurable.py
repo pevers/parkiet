@@ -6,7 +6,6 @@ Configurable Whisper Fine-tuning Script for Dutch/Flemish CGN Data
 import logging
 import argparse
 from typing import Dict, List, Any
-import regex
 import torch
 from datasets import DatasetDict
 from transformers import (
@@ -146,7 +145,7 @@ class ConfigurableWhisperTrainer:
         logger.info("Model and processor loaded successfully")
 
     def load_dataset(self) -> DatasetDict:
-        """Load and prepare the CGN dataset using shared dataset loader"""
+        """Load and prepare the CGN dataset using dataset loader"""
         self.dataset_loader = DatasetLoader(
             dataset_path=self.config.dataset_path,
             dataset_file=self.config.dataset_file,
@@ -177,12 +176,10 @@ class ConfigurableWhisperTrainer:
             audio = batch["audio"]
 
             # Compute input features
-            input_features = self.feature_extractor(
-                audio["array"], sampling_rate=audio["sampling_rate"]
-            ).input_features[0]
-
-            # Encode text
-            batch["input_features"] = input_features
+            batch["input_features"] = self.feature_extractor(
+                [x["array"] for x in audio],
+                sampling_rate=audio[0]["sampling_rate"],
+            ).input_features
 
             # Tokenize text
             batch["labels"] = self.tokenizer(batch["text"]).input_ids
@@ -193,7 +190,7 @@ class ConfigurableWhisperTrainer:
 
             return batch
 
-        # Preprocess and cache dataset using the shared dataset loader
+        # Preprocess and cache dataset
         return self.dataset_loader.preprocess_dataset(
             dataset_dict, prepare_dataset, self.config.dataloader_num_workers
         )

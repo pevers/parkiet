@@ -198,6 +198,8 @@ class CGNProcessorClean:
             "&reg;": "®",
             "&oslash;": "ø",
             "&Oslash;": "Ø",
+            "&Aring;": "Å",
+            "&aring;": "å",
         }
 
         # Replace HTML entities with Unicode equivalents
@@ -230,7 +232,11 @@ class CGNProcessorClean:
 
             if self.is_laughter_word(word):
                 laughter_count += 1
-                cleaned_parts.append("(lacht)")
+                word_with_punct = "(lacht)"
+                if punctuation:
+                    word_with_punct += punctuation
+                    punctuation_added += 1
+                cleaned_parts.append(word_with_punct)
             elif self.is_inaudible_word(word):
                 inaudible_count += 1
                 # Don't add the word, but still add punctuation if present
@@ -243,12 +249,11 @@ class CGNProcessorClean:
             else:
                 cleaned_word = self.clean_word(word)
                 if cleaned_word:
-                    # Add the word with punctuation if present
+                    # Always attach punctuation directly to the word
                     if punctuation:
-                        cleaned_parts.append(cleaned_word + punctuation)
+                        cleaned_word += punctuation
                         punctuation_added += 1
-                    else:
-                        cleaned_parts.append(cleaned_word)
+                    cleaned_parts.append(cleaned_word)
 
         # Update punctuation statistics
         self.stats["punctuation_added"] += punctuation_added

@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""
-Shared dataset loading functionality for Whisper training and evaluation
-"""
-
 import json
 import logging
 import gc
@@ -15,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class DatasetLoader:
-    """Shared dataset loader for Whisper training and evaluation"""
+    """Dataset loader for Whisper training and evaluation"""
 
     def __init__(
         self,
@@ -179,12 +174,14 @@ class DatasetLoader:
             logger.info(f"Processing {split_name} split...")
             processed_dataset = split_dataset.map(
                 preprocessing_function,
+                batched=True,
+                batch_size=250,
+                writer_batch_size=250,
                 remove_columns=split_dataset.column_names,
                 desc=f"Preprocessing {split_name}",
                 # Use multiple processes for faster preprocessing
                 num_proc=dataloader_num_workers if dataloader_num_workers > 1 else None,
                 keep_in_memory=False,
-                batch_size=1,
             )
             processed_dataset_dict[split_name] = processed_dataset
 

@@ -40,7 +40,7 @@ class TrainingConfig:
     # Training settings
     gradient_checkpointing: bool = True
     fp16: bool = True
-    dataloader_num_workers: int = 4
+    dataloader_num_workers: int = 2
 
     # Evaluation and logging
     eval_strategy: str = "steps"
@@ -108,5 +108,5 @@ class LowMemoryConfig(TrainingConfig):
     gradient_accumulation_steps: int = 4
     gradient_checkpointing: bool = True
     fp16: bool = True
-    dataloader_num_workers: int = 4
+    dataloader_num_workers: int = 8
     run_name: str = "whisper-dutch-low-memory"
