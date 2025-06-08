@@ -1,17 +1,8 @@
-#!/usr/bin/env python3
 """
 CGN Data Preparation Script for Whisper Fine-tuning (Clean Version)
 
 This script processes the CGN (Corpus Gesproken Nederlands) data and filters out
-inaudible markers ("xxx") to create cleaner training data:
-
-1. Reads XML annotations from ../data/CGN_2.0.3/data/annot/xml/skp-ort
-2. Processes corresponding WAV files from ../data/CGN_2.0.3/data/audio/wav
-3. Filters out "xxx" tokens and chunks with too many inaudible words
-4. Chunks audio to max 30 seconds respecting word boundaries
-5. Converts to mono 16kHz using ffmpeg
-6. Generates clean transcripts for Whisper fine-tuning
-7. Saves processed data to ../data/training
+inaudible markers ("xxx") to create cleaner training data
 """
 
 import gzip
@@ -137,7 +128,6 @@ class CGNProcessorClean:
         Preprocess XML content to handle HTML entities that XML parser doesn't recognize.
         This converts HTML entities to their Unicode equivalents while preserving XML structure.
         """
-        # Common HTML entities found in CGN corpus that XML parser doesn't handle
         html_entities = {
             "&eacute;": "é",
             "&Eacute;": "É",
