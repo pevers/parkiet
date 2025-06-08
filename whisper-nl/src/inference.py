@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Simple inference script for fine-tuned Whisper model
 """
@@ -16,7 +15,7 @@ def load_model(checkpoint_path):
     print(f"Loading model from {checkpoint_path}...")
 
     # Load processor and model
-    # model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-small")
+    #model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-large")
     model = WhisperForConditionalGeneration.from_pretrained(checkpoint_path)
     model.generation_config.suppress_tokens = []
     processor = WhisperProcessor.from_pretrained(
@@ -24,8 +23,8 @@ def load_model(checkpoint_path):
     )
 
     # Move to GPU if available
-    device = torch.device("cpu")  # For debugging
-    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cpu")  # For debugging
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
     print(f"Model loaded on {device}")
@@ -60,7 +59,7 @@ def transcribe_audio(audio_path, processor, model, device):
 
     # Generate transcription
     with torch.no_grad():
-        predicted_ids = model.generate(input_features, max_length=225)
+        predicted_ids = model.generate(input_features)
 
     # Decode transcription
     transcription = processor.batch_decode(predicted_ids, skip_special_tokens=False)
@@ -70,7 +69,7 @@ def transcribe_audio(audio_path, processor, model, device):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Transcribe audio using fine-tuned Whisper model"
+        description="Transcribe audio using fi  ne-tuned Whisper model"
     )
     parser.add_argument(
         "--audio_file",

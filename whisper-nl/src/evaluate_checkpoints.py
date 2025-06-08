@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Evaluation script to compare two Whisper checkpoints
 """

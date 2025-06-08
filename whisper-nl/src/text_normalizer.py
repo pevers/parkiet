@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Text normalization utilities for Whisper fine-tuning
 """

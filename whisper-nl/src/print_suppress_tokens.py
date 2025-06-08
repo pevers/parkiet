@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Script to print default suppress tokens from Whisper tokenizer
 """

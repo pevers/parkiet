@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Configurable Whisper Fine-tuning Script for Dutch/Flemish CGN Data
 """
