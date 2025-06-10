@@ -8,16 +8,14 @@ from typing import Dict, List, Any
 import torch
 from datasets import DatasetDict
 from transformers import (
-    WhisperFeatureExtractor,
-    WhisperTokenizer,
-    WhisperProcessor,
-    WhisperForConditionalGeneration,
+    AutoModelForSpeechSeq2Seq,
+    AutoProcessor,
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
 )
 import evaluate
 
-from config import TrainingConfig, QuickTestConfig, ProductionConfig, LowMemoryConfig
+from config import TrainingConfig, QuickTestConfig, ProductionConfig
 from text_normalizer import BasicTextNormalizer
 from dataset_loader import DatasetLoader
 
@@ -55,7 +53,6 @@ class WhisperDataCollator:
         labels = labels_batch["input_ids"].masked_fill(
             labels_batch.attention_mask.ne(1), -100
         )
-
         # Cut decoder_start_token_id if present
         if (labels[:, 0] == self.decoder_start_token_id).all().cpu().item():
             labels = labels[:, 1:]
@@ -88,49 +85,38 @@ class ConfigurableWhisperTrainer:
         """Initialize model, tokenizer, and feature extractor"""
         logger.info(f"Loading model and processor: {self.config.model_name}")
 
-        # Load feature extractor
-        self.feature_extractor = WhisperFeatureExtractor.from_pretrained(
-            self.config.model_name
-        )
+        # Set device and dtype for optimal performance with whisper-large-v3
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-        # Load tokenizer
-        self.tokenizer = WhisperTokenizer.from_pretrained(
-            self.config.model_name,
-            language=self.config.language,
-            task=self.config.task,
-        )
+        # Load processor (combines feature extractor and tokenizer)
+        self.processor = AutoProcessor.from_pretrained(self.config.model_name)
 
-        # Load processor
-        self.processor = WhisperProcessor.from_pretrained(
-            self.config.model_name,
-            language=self.config.language,
-            task=self.config.task,
-        )
-
-        # Ensure forced_decoder_ids are properly cleared in processor
+        # Set language and task for the processor
         self.processor.tokenizer.set_prefix_tokens(
             language=self.config.language, task=self.config.task
         )
 
-        # Load model
-        self.model = WhisperForConditionalGeneration.from_pretrained(
-            self.config.model_name
+        # For compatibility, also set individual components
+        self.feature_extractor = self.processor.feature_extractor
+        self.tokenizer = self.processor.tokenizer
+
+        # Load model with optimized settings for whisper-large-v3
+        self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
+            self.config.model_name, low_cpu_mem_usage=True, use_safetensors=True
         )
 
-        # Resize token embeddings if needed
-        if len(self.tokenizer) > self.model.config.vocab_size:
-            self.model.resize_token_embeddings(len(self.tokenizer))
+        # Move model to device
+        self.model.to(device)
 
-        # Model configuration
+        # Resize token embeddings if needed
+        if len(self.processor.tokenizer) > self.model.config.vocab_size:
+            self.model.resize_token_embeddings(len(self.processor.tokenizer))
+
+        # Model configuration optimized for whisper-large-v3
         self.model.generation_config.forced_decoder_ids = None
         self.model.generation_config.suppress_tokens = []
         self.model.generation_config.language = self.config.language
         self.model.generation_config.task = self.config.task
-
-        # Disable caching when gradient checkpointing is enabled
-        if self.config.gradient_checkpointing:
-            self.model.config.use_cache = False
-            self.model.generation_config.use_cache = False
 
         # Freeze parts of model if specified
         if self.config.freeze_feature_encoder:
@@ -142,6 +128,14 @@ class ConfigurableWhisperTrainer:
             logger.info("Encoder frozen")
 
         logger.info("Model and processor loaded successfully")
+        logger.info(f"Model type: {type(self.model).__name__}")
+        logger.info(
+            f"Model config: {self.model.config.name_or_path if hasattr(self.model.config, 'name_or_path') else 'Unknown'}"
+        )
+        logger.info(f"Processor type: {type(self.processor).__name__}")
+        logger.info(
+            f"Model parameters: {sum(p.numel() for p in self.model.parameters()) / 1e6:.1f}M"
+        )
 
     def load_dataset(self) -> DatasetDict:
         """Load and prepare the CGN dataset using dataset loader"""
@@ -174,36 +168,38 @@ class ConfigurableWhisperTrainer:
             # Load and process audio
             audio = batch["audio"]
 
-            # Compute input features
-            batch["input_features"] = self.feature_extractor(
+            # Compute input features using the processor's feature extractor
+            batch["input_features"] = self.processor.feature_extractor(
                 [x["array"] for x in audio],
                 sampling_rate=audio[0]["sampling_rate"],
             ).input_features
 
-            # Tokenize text
-            batch["labels"] = self.tokenizer(batch["text"]).input_ids
-
-            # NOTE: This squeezes the speed a LOT but necessary on my tiny desktop PC
-            # del audio
-            # gc.collect()
+            # Tokenize text using the processor's tokenizer
+            batch["labels"] = self.processor.tokenizer(
+                batch["text"],
+                truncation=True,
+                max_length=448,  # Match generation_max_length
+            ).input_ids
 
             return batch
 
         # Preprocess and cache dataset
-        return self.dataset_loader.preprocess_dataset(
-            dataset_dict, prepare_dataset, self.config.dataloader_num_workers
-        )
+        return self.dataset_loader.preprocess_dataset(dataset_dict, prepare_dataset)
 
     def compute_metrics(self, eval_preds):
         """Compute WER metric"""
         pred_ids, label_ids = eval_preds
 
         # Replace -100 with pad token id for proper decoding
-        label_ids[label_ids == -100] = self.tokenizer.pad_token_id
+        label_ids[label_ids == -100] = self.processor.tokenizer.pad_token_id
 
         # Decode predictions and labels with proper attention handling
-        pred_str = self.tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
-        label_str = self.tokenizer.batch_decode(label_ids, skip_special_tokens=True)
+        pred_str = self.processor.tokenizer.batch_decode(
+            pred_ids, skip_special_tokens=True
+        )
+        label_str = self.processor.tokenizer.batch_decode(
+            label_ids, skip_special_tokens=True
+        )
 
         # Normalize texts
         pred_str = [self.normalizer(pred) for pred in pred_str]
@@ -227,7 +223,7 @@ class ConfigurableWhisperTrainer:
             warmup_steps=self.config.warmup_steps,
             max_steps=self.config.max_steps,
             gradient_checkpointing=self.config.gradient_checkpointing,
-            fp16=self.config.fp16,
+            bf16=self.config.bf16,
             eval_strategy=self.config.eval_strategy,
             eval_steps=self.config.eval_steps,
             save_steps=self.config.save_steps,
@@ -258,7 +254,7 @@ class ConfigurableWhisperTrainer:
             eval_dataset=eval_dataset,
             data_collator=data_collator,
             compute_metrics=self.compute_metrics,
-            tokenizer=self.processor.feature_extractor,
+            processing_class=self.processor,
         )
 
         return trainer
@@ -303,9 +299,9 @@ def main():
     parser.add_argument(
         "--config",
         type=str,
-        choices=["quick", "production", "low_memory"],
+        choices=["quick", "production"],
         default="quick",
-        help="Configuration preset to use",
+        help="Configuration preset to use (quick: low memory/small dataset, production: full training)",
     )
     parser.add_argument("--output-dir", type=str, help="Override output directory")
     parser.add_argument(
@@ -321,13 +317,12 @@ def main():
     # Select configuration
     if args.config == "quick":
         config = QuickTestConfig()
-        logger.info("Using quick test configuration")
+        logger.info(
+            "Using quick test configuration for whisper-large-v3 (low memory, small dataset)"
+        )
     elif args.config == "production":
         config = ProductionConfig()
-        logger.info("Using production configuration")
-    elif args.config == "low_memory":
-        config = LowMemoryConfig()
-        logger.info("Using low memory configuration")
+        logger.info("Using production configuration for whisper-large-v3")
 
     # Apply command line overrides
     if args.output_dir:

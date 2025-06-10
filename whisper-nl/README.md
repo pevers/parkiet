@@ -5,6 +5,13 @@ Whisper fine-tuned on a large set of Dutch audio to output:
 - [ ] Disfluencies
 - [ ] Speech events
 
+## Training
+
+```bash
+# Install flash-attn kernl
+uv pip install flash-attn --no-build-isolation
+```
+
 ## Data
 
 The CGN contains disfluencies and literal transcriptions of more than 900 hours of Dutch audio. 

@@ -15,7 +15,7 @@ def load_model(checkpoint_path):
     print(f"Loading model from {checkpoint_path}...")
 
     # Load processor and model
-    #model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-large")
+    # model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-large")
     model = WhisperForConditionalGeneration.from_pretrained(checkpoint_path)
     model.generation_config.suppress_tokens = []
     processor = WhisperProcessor.from_pretrained(

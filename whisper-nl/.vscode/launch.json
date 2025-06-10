@@ -17,6 +17,21 @@
             "justMyCode": false
         },
         {
+            "name": "Train",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/src/train_configurable.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--config",
+                "quick"
+            ],
+            "env": {
+                "ACCELERATE_MIXED_PRECISION": "fp16"
+            }
+        },
+        {
             "name": "Prepare Data",
             "type": "debugpy",
             "request": "launch",

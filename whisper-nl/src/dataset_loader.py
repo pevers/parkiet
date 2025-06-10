@@ -159,10 +159,7 @@ class DatasetLoader:
             return None
 
     def preprocess_dataset(
-        self,
-        dataset_dict: DatasetDict,
-        preprocessing_function: Callable,
-        dataloader_num_workers: int = 4,
+        self, dataset_dict: DatasetDict, preprocessing_function: Callable
     ) -> DatasetDict:
         """Preprocess dataset and save to cache"""
         logger.info("Preprocessing dataset...")
@@ -179,8 +176,6 @@ class DatasetLoader:
                 writer_batch_size=250,
                 remove_columns=split_dataset.column_names,
                 desc=f"Preprocessing {split_name}",
-                # Use multiple processes for faster preprocessing
-                num_proc=dataloader_num_workers if dataloader_num_workers > 1 else None,
                 keep_in_memory=False,
             )
             processed_dataset_dict[split_name] = processed_dataset
