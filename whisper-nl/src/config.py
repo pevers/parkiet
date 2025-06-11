@@ -57,8 +57,7 @@ class TrainingConfig:
     run_name: Optional[str] = None
 
     def __post_init__(self):
-        if self.report_to is None:
-            self.report_to = ["tensorboard"]
+        self.report_to = ["tensorboard"]
 
 
 @dataclass
@@ -72,12 +71,15 @@ class QuickTestConfig(TrainingConfig):
     max_train_samples: int = 200
     max_eval_samples: int = 30
     per_device_train_batch_size: int = 1
-    per_device_eval_batch_size: int = 1
-    gradient_accumulation_steps: int = 2
+    per_device_eval_batch_size: int = 4
+    gradient_accumulation_steps: int = 4
     learning_rate: float = 3e-6
     warmup_steps: int = 50
     dataloader_num_workers: int = 8
     run_name: str = "whisper-large-v3-dutch-quick-test"
+    preprocessed_cache_dir: Optional[str] = (
+        "../data/training/.cache/preprocessed-quick-test"
+    )
 
 
 @dataclass
@@ -85,15 +87,15 @@ class ProductionConfig(TrainingConfig):
     """Production configuration for whisper-large-v3 with optimized parameters"""
 
     output_dir: str = "../data/whisper-large-v3-dutch-cgn-prod"
-    max_steps: int = 4500  # ~3 epochs for 90k samples
-    eval_steps: int = 750  # Evaluate ~6 times per epoch
-    save_steps: int = 750  # Save ~6 times per epoch
+    max_steps: int = 20000
+    eval_steps: int = 4000
+    save_steps: int = 4000
     learning_rate: float = 5e-6
-    warmup_steps: int = 700  # ~15% of max_steps
+    warmup_steps: int = 500
     per_device_train_batch_size: int = 1
-    per_device_eval_batch_size: int = 1
-    gradient_accumulation_steps: int = 2
-    dataloader_num_workers: int = 8
+    per_device_eval_batch_size: int = 6
+    gradient_accumulation_steps: int = 16
+    dataloader_num_workers: int = 16
     run_name: str = "whisper-large-v3-dutch-prod"
 
 

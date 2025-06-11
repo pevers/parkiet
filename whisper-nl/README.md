@@ -9,7 +9,7 @@ Whisper fine-tuned on a large set of Dutch audio to output:
 
 ```bash
 # Install flash-attn kernl
-uv pip install flash-attn --no-build-isolation
+uv pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.3.10/flash_attn-2.7.4+cu128torch2.7-cp312-cp312-linux_x86_64.whl
 ```
 
 ## Data

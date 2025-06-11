@@ -3,7 +3,6 @@ import logging
 import gc
 from pathlib import Path
 from typing import Optional, Callable
-
 from datasets import Dataset, DatasetDict, Audio
 
 logger = logging.getLogger(__name__)
@@ -172,8 +171,12 @@ class DatasetLoader:
             processed_dataset = split_dataset.map(
                 preprocessing_function,
                 batched=True,
-                batch_size=250,
-                writer_batch_size=250,
+                batch_size=8,
+                writer_batch_size=8,
+                num_proc=1,
+                cache_file_name=str(
+                    Path(self.preprocessed_cache_dir) / f"cache_{split_name}.arrow"
+                ),
                 remove_columns=split_dataset.column_names,
                 desc=f"Preprocessing {split_name}",
                 keep_in_memory=False,
@@ -181,6 +184,7 @@ class DatasetLoader:
             processed_dataset_dict[split_name] = processed_dataset
 
             # Force garbage collection after processing each split
+            del split_dataset
             gc.collect()
 
             logger.info(f"Completed processing {split_name} split")
