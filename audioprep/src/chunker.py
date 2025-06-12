@@ -6,12 +6,16 @@ from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing
 import time
+import torch
 
 from schemas import AudioChunk, ProcessedAudioData, SpeakerEvent
-from utils.audio import get_audio_duration, extract_audio_segment, find_audio_files, find_natural_break_after_time
+from utils.audio import (
+    get_audio_duration,
+    extract_audio_segment,
+    find_audio_files,
+    find_natural_break_after_time,
+)
 from utils.speaker import extract_speaker_events
-
-
 
 
 def create_chunks(
@@ -106,13 +110,11 @@ def create_chunks(
                 start=current_time * 1000,
                 end=window_end * 1000,
                 file_path=chunk_filename,
-                speaker_events=window_events
+                speaker_events=window_events,
             )
 
             chunks.append(chunk)
-            print(
-                f"Created chunk {len(chunks)}: {current_time:.1f}s-{window_end:.1f}s"
-            )
+            print(f"Created chunk {len(chunks)}: {current_time:.1f}s-{window_end:.1f}s")
 
         # Move window forward (could be overlapping or non-overlapping based on requirements)
         current_time += window_size_sec  # Non-overlapping windows
@@ -135,6 +137,7 @@ def process_single_audio_file(
         ProcessedAudioData object
     """
     start_time = time.time()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     try:
         # Create output directory based on audio file name (without extension)
@@ -145,7 +148,7 @@ def process_single_audio_file(
         print(f"Processing: {audio_file_path.name}")
         print(f"Output directory: {output_dir_path}")
         print("Extracting speaker events with pyannote...")
-        speaker_events = extract_speaker_events(audio_file_path)
+        speaker_events = extract_speaker_events(audio_file_path, device)
         print(f"Found {len(speaker_events)} speaker events")
 
         if not speaker_events:
@@ -156,34 +159,31 @@ def process_single_audio_file(
                 audio_duration_sec=get_audio_duration(audio_file_path),
                 chunks=[],
                 processing_window={"start": 0.0, "end": 0.0},
-                success=False
+                success=False,
             )
 
         print("Creating audio chunks...")
-        chunks, processing_window, audio_duration = create_chunks(speaker_events, audio_file_path, output_dir_path)
+        chunks, processing_window, audio_duration = create_chunks(
+            speaker_events, audio_file_path, output_dir_path
+        )
 
         # Create comprehensive processed data
         processed_data = ProcessedAudioData(
             source_file=str(audio_file_path),
+            output_directory=str(output_dir_path),
             audio_duration_sec=audio_duration,
             chunks=chunks,
-            processing_window=processing_window
+            processing_window=processing_window,
+            success=True,
         )
-        
+
         # Save comprehensive data as single JSON file
         data_json_path = output_dir_path / "processed_data.json"
         with open(data_json_path, "w") as f:
             json.dump(processed_data.model_dump(), f, indent=2)
 
         print(f"Completed: {len(chunks)} chunks in {time.time() - start_time:.1f}s")
-
-        return ProcessedAudioData(
-            source_file=str(audio_file_path),
-            output_directory=str(output_dir_path),
-            chunks=chunks,
-            processing_window=processing_window,
-            success=True
-        )
+        return processed_data
 
     except Exception as e:
         print(f"Error processing {audio_file_path.name}: {str(e)}")
@@ -193,7 +193,7 @@ def process_single_audio_file(
             audio_duration_sec=get_audio_duration(audio_file_path),
             chunks=[],
             processing_window={"start": 0.0, "end": 0.0},
-            success=False
+            success=False,
         )
 
 
@@ -251,7 +251,7 @@ def preprocess_audio_batch(
         "source_folder": str(source_path),
         "target_folder": str(target_path),
         "total_files_processed": len(results),
-        "successful_files": len([r for r in results if r.success]),
+        "successful_files": len([r for r in results if r]),
         "failed_files": len([r for r in results if not r.success]),
         "total_chunks": sum(len(r.chunks) for r in results if r.success),
         "results": [result.model_dump() for result in results],
@@ -273,7 +273,7 @@ def preprocess_audio_batch(
     if failed_results:
         print("\nFailed files:")
         for result in failed_results:
-            print(f"- {Path(result.source_file).name}: {result.error_message}")
+            print(f"- {Path(result.source_file).name}")
 
 
 if __name__ == "__main__":

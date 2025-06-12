@@ -31,4 +31,4 @@ def extract_speaker_events(audio_path: Path, device: str = "cpu") -> list[Speake
 
     # Sort by start time
     events.sort(key=lambda x: x.start)
-    return events 
+    return events

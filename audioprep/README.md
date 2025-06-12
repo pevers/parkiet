@@ -1,5 +1,8 @@
 # audioprep
 
+TODO: Use whisper-timestamped with the fine-tuned model to get accurate timestamps using DTW. We the only use Pyanote to get sensible chunks. 
+Whisper is aweful on large batches and we don't know where the audio is cut off. So that's where Pyanote comes in.
+
 We collected a list of popular Dutch podcasts and "hoorspelen" and transcribed the audio.
 Quality control is done via the transcription model and the audio is then split into segments up to 30 seconds after which prompts are generated.
 

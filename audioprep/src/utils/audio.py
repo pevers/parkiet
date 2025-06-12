@@ -64,7 +64,7 @@ def find_audio_files(source_folder: Path) -> list[Path]:
     """
     # Supported audio file extensions
     AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".m4a", ".aac", ".ogg", ".wma"}
-    
+
     audio_files = []
     for file_path in source_folder.rglob("*"):
         if file_path.is_file() and file_path.suffix.lower() in AUDIO_EXTENSIONS:
@@ -91,4 +91,4 @@ def find_natural_break_after_time(
             return event.end
 
     # If no event found after target time, return target time
-    return target_time_sec 
+    return target_time_sec

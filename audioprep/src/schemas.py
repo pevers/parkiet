@@ -1,13 +1,15 @@
 from pydantic import BaseModel
 from dataclasses import dataclass
 
+
 @dataclass
 class SpeakerEvent:
     """Represents a speaker event from pyannote diarization."""
 
     start: float  # seconds
     end: float  # seconds
-    speaker: str 
+    speaker: str
+
 
 class AudioChunk(BaseModel):
     """Represents an audio chunk from preprocessing."""
@@ -20,7 +22,7 @@ class AudioChunk(BaseModel):
 
 class ProcessedAudioData(BaseModel):
     """Represents all processed data for a single audio file."""
-    
+
     source_file: str
     output_directory: str
     audio_duration_sec: float

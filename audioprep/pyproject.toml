@@ -12,7 +12,8 @@ dependencies = [
     "types-beautifulsoup4",
     "azure-storage-blob>=12.25.1",
     "pydantic>=2.11.5",
-    "torch>=2.7.0",
+    "torch>2.6",
+    "torchaudio>2.6",
     "transformers>=4.52.3",
     "librosa>=0.11.0",
     "ulid-py>=1.1.0",
@@ -21,6 +22,19 @@ dependencies = [
     "whisper-timestamped>=1.15.8",
     "pyannote.audio>=3.1.1",
     "numpy>=1.24.0"
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchaudio = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 
 [dependency-groups]
