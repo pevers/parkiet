@@ -3,7 +3,7 @@ Simple inference script for fine-tuned Whisper model
 """
 
 import torch
-from transformers import WhisperProcessor, WhisperForConditionalGeneration
+from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
 import soundfile as sf
 import librosa
 import argparse
@@ -15,11 +15,13 @@ def load_model(checkpoint_path):
     print(f"Loading model from {checkpoint_path}...")
 
     # Load processor and model
-    # model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-large")
-    model = WhisperForConditionalGeneration.from_pretrained(checkpoint_path)
+    # model = AutoModelForSpeechSeq2Seq.from_pretrained("openai/whisper-large-v3", low_cpu_mem_usage=True, use_safetensors=True)
+    model = AutoModelForSpeechSeq2Seq.from_pretrained(
+        checkpoint_path, low_cpu_mem_usage=True, use_safetensors=True
+    )
     model.generation_config.suppress_tokens = []
-    processor = WhisperProcessor.from_pretrained(
-        "openai/whisper-small", language="dutch", task="transcribe"
+    processor = AutoProcessor.from_pretrained(
+        "openai/whisper-large-v3", language="dutch", task="transcribe"
     )
 
     # Move to GPU if available

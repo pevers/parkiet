@@ -19,7 +19,7 @@ from typing import Annotated
 from pydantic import BaseModel, BeforeValidator, Field
 
 
-class DataConfig(BaseModel, frozen=True):
+class DataConfig(BaseModel):
     """Configuration for data loading and preprocessing.
 
     Attributes:
@@ -33,14 +33,20 @@ class DataConfig(BaseModel, frozen=True):
         delay_pattern: List of delay values for each audio channel.
     """
 
-    text_length: Annotated[int, BeforeValidator(lambda x: (x + 127) // 128 * 128)] = Field(gt=0, multiple_of=128)
-    audio_length: Annotated[int, BeforeValidator(lambda x: (x + 127) // 128 * 128)] = Field(gt=0, multiple_of=128)
+    text_length: Annotated[int, BeforeValidator(lambda x: (x + 127) // 128 * 128)] = (
+        Field(gt=0, multiple_of=128)
+    )
+    audio_length: Annotated[int, BeforeValidator(lambda x: (x + 127) // 128 * 128)] = (
+        Field(gt=0, multiple_of=128)
+    )
     channels: int = Field(default=9, gt=0, multiple_of=1)
     text_pad_value: int = Field(default=0)
     audio_eos_value: int = Field(default=1024)
     audio_pad_value: int = Field(default=1025)
     audio_bos_value: int = Field(default=1026)
-    delay_pattern: list[Annotated[int, Field(ge=0)]] = Field(default_factory=lambda: [0, 8, 9, 10, 11, 12, 13, 14, 15])
+    delay_pattern: list[Annotated[int, Field(ge=0)]] = Field(
+        default_factory=lambda: [0, 8, 9, 10, 11, 12, 13, 14, 15]
+    )
 
     def __hash__(self) -> int:
         """Generate a hash based on all fields of the config."""
@@ -76,7 +82,7 @@ class EncoderConfig(BaseModel, frozen=True):
     head_dim: int = Field(gt=0)
 
 
-class DecoderConfig(BaseModel, frozen=True):
+class DecoderConfig(BaseModel):
     """Configuration for the decoder component of the Dia model.
 
     Attributes:
@@ -100,7 +106,7 @@ class DecoderConfig(BaseModel, frozen=True):
     cross_head_dim: int = Field(gt=0)
 
 
-class ModelConfig(BaseModel, frozen=True):
+class ModelConfig(BaseModel):
     """Main configuration container for the Dia model architecture.
 
     Attributes:
@@ -122,15 +128,31 @@ class ModelConfig(BaseModel, frozen=True):
     dropout: float = Field(default=0.0, ge=0.0, lt=1.0)
     normalization_layer_epsilon: float = Field(default=1.0e-5, ge=0.0)
     weight_dtype: str = Field(default="float32", description="Weight precision")
-    rope_min_timescale: int = Field(default=1, description="Timescale For global Attention")
-    rope_max_timescale: int = Field(default=10_000, description="Timescale For global Attention")
+    rope_min_timescale: int = Field(
+        default=1, description="Timescale For global Attention"
+    )
+    rope_max_timescale: int = Field(
+        default=10_000, description="Timescale For global Attention"
+    )
 
 
-class TrainingConfig(BaseModel, frozen=True):
-    pass
+class TrainingConfig(BaseModel):
+    """Configuration for the training process.
+
+    Attributes:
+        batch_size: Batch size for training.
+        learning_rate: Learning rate for training.
+        weight_decay: Weight decay for training.
+    """
+
+    batch_size: int = Field(default=1, gt=0)
+    learning_rate: float = Field(default=1.0e-4, ge=0.0)
+    num_workers: int = Field(default=8, ge=0)
+    eval_steps: int = Field(default=100, ge=0)
+    save_steps: int = Field(default=100, ge=0)
 
 
-class DiaConfig(BaseModel, frozen=True):
+class DiaConfig(BaseModel):
     """Master configuration for the Dia model.
 
     Combines all sub-configurations into a single validated object.

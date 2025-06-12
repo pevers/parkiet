@@ -1,6 +1,6 @@
 # Training
 
-We fine-tune the Dia model on the Dutch audio data.
+We fine-tune the Dia model on the Dutch audio data. All rights for the original model go to the Dia authors.
 
 # Setup
 

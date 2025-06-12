@@ -32,7 +32,9 @@ def create_attn_mask(
 
     if is_causal:
         # assert Tq == Tk, "Causal mask requires query and key sequence lengths to be equal"
-        causal_mask_2d = torch.tril(torch.ones_like(mask[0], dtype=torch.bool, device=device))  # Shape [B, Tq, Tk]
+        causal_mask_2d = torch.tril(
+            torch.ones_like(mask[0], dtype=torch.bool, device=device)
+        )  # Shape [B, Tq, Tk]
         causal_mask = mask & causal_mask_2d  # Shape [B, Tq, Tk]
         return causal_mask.unsqueeze(1)  # Shape [B, 1, Tq, Tk]
     else:
@@ -54,9 +56,17 @@ class EncoderInferenceState:
         """Creates EtorchrInferenceParams from DiaConfig and a device."""
         device = cond_src.device
 
-        positions = torch.arange(config.data.text_length, dtype=torch.float32, device=device).unsqueeze(0)
-        padding_mask = (cond_src.squeeze(1) != config.data.text_pad_value).to(device).repeat_interleave(2, dim=0)
-        attn_mask = create_attn_mask(padding_mask, padding_mask, device, is_causal=False)
+        positions = torch.arange(
+            config.data.text_length, dtype=torch.float32, device=device
+        ).unsqueeze(0)
+        padding_mask = (
+            (cond_src.squeeze(1) != config.data.text_pad_value)
+            .to(device)
+            .repeat_interleave(2, dim=0)
+        )
+        attn_mask = create_attn_mask(
+            padding_mask, padding_mask, device, is_causal=False
+        )
 
         return cls(
             max_seq_len=config.data.text_length,
@@ -82,8 +92,24 @@ class KVCache(torch.nn.Module):
         k: torch.Tensor | None = None,
         v: torch.Tensor | None = None,
     ):
-        k = torch.zeros((2 * batch_size, num_heads, max_len, head_dim), dtype=dtype, device=device) if k is None else k
-        v = torch.zeros((2 * batch_size, num_heads, max_len, head_dim), dtype=dtype, device=device) if v is None else v
+        k = (
+            torch.zeros(
+                (2 * batch_size, num_heads, max_len, head_dim),
+                dtype=dtype,
+                device=device,
+            )
+            if k is None
+            else k
+        )
+        v = (
+            torch.zeros(
+                (2 * batch_size, num_heads, max_len, head_dim),
+                dtype=dtype,
+                device=device,
+            )
+            if v is None
+            else v
+        )
         super().__init__()
 
         self.register_buffer("k", k)
@@ -102,7 +128,9 @@ class KVCache(torch.nn.Module):
             v=v,
         )
 
-    def update(self, k: torch.Tensor, v: torch.Tensor, current_idx: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def update(
+        self, k: torch.Tensor, v: torch.Tensor, current_idx: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         k_out, v_out = self.k, self.v
         k_out[:, :, current_idx, :] = k
         v_out[:, :, current_idx, :] = v
@@ -143,10 +171,16 @@ class DecoderInferenceState:
         max_audio_len = max_generation_length or config.data.audio_length
         batch_size = enc_out.shape[0] // 2
 
-        dec_positions = torch.full((2 * batch_size, 1), fill_value=0, dtype=torch.int32, device=device)
-        causal_mask = torch.tril(torch.ones(max_audio_len, max_audio_len, dtype=torch.bool, device=device))
+        dec_positions = torch.full(
+            (2 * batch_size, 1), fill_value=0, dtype=torch.int32, device=device
+        )
+        causal_mask = torch.tril(
+            torch.ones(max_audio_len, max_audio_len, dtype=torch.bool, device=device)
+        )
         dec_mask = torch.ones((2 * batch_size, 1), dtype=torch.bool, device=device)
-        cross_attn_mask = create_attn_mask(dec_mask, enc_state.padding_mask, device, is_causal=False)
+        cross_attn_mask = create_attn_mask(
+            dec_mask, enc_state.padding_mask, device, is_causal=False
+        )
 
         self_attn_cache = [
             KVCache(
@@ -175,7 +209,9 @@ class DecoderInferenceState:
     def prepare_step(self, step_from: int, step_to: int | None = None) -> None:
         if step_to is None:
             step_to = step_from + 1
-        self.dec_positions = torch.arange(step_from, step_to, dtype=torch.int32, device=self.device).unsqueeze(0)
+        self.dec_positions = torch.arange(
+            step_from, step_to, dtype=torch.int32, device=self.device
+        ).unsqueeze(0)
 
 
 @dataclass
@@ -184,7 +220,9 @@ class DecoderOutput:
     prefill_steps: list[int]
 
     @classmethod
-    def new(cls, batch_size: int, config: DiaConfig, device: torch.device) -> "DecoderOutput":
+    def new(
+        cls, batch_size: int, config: DiaConfig, device: torch.device
+    ) -> "DecoderOutput":
         max_audio_len = config.data.audio_length
         return cls(
             generated_tokens=torch.full(
@@ -205,7 +243,9 @@ class DecoderOutput:
         dec_out = dec_out.to(self.generated_tokens.dtype)
         if apply_mask:
             mask = self.generated_tokens[:, step, :] == -1
-            self.generated_tokens[:, step, :] = torch.where(mask, dec_out, self.generated_tokens[:, step, :])
+            self.generated_tokens[:, step, :] = torch.where(
+                mask, dec_out, self.generated_tokens[:, step, :]
+            )
         else:
             self.generated_tokens[:, step, :] = dec_out
 

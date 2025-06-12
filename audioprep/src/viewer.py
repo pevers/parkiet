@@ -1,10 +1,9 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import json
 import os
 from pathlib import Path
-from typing import List, Dict, Any
 import uvicorn
 
 app = FastAPI(title="Prompts Viewer")

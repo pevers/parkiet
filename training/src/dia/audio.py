@@ -3,7 +3,9 @@ import typing as tp
 import torch
 
 
-def build_delay_indices(B: int, T: int, C: int, delay_pattern: tp.List[int]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
+def build_delay_indices(
+    B: int, T: int, C: int, delay_pattern: tp.List[int]
+) -> tp.Tuple[torch.Tensor, torch.Tensor]:
     """
     Precompute (t_idx_BxTxC, indices_BTCx3) so that out[t, c] = in[t - delay[c], c].
     Negative t_idx => BOS; t_idx >= T => PAD.
@@ -67,7 +69,9 @@ def apply_audio_delay(
 
     # Equivalent of tf.gather_nd using advanced indexing
     # Ensure indices are long type if not already (build_delay_indices should handle this)
-    gathered_flat = audio_BxTxC[indices_BTCx3[:, 0], indices_BTCx3[:, 1], indices_BTCx3[:, 2]]
+    gathered_flat = audio_BxTxC[
+        indices_BTCx3[:, 0], indices_BTCx3[:, 1], indices_BTCx3[:, 2]
+    ]
     gathered_BxTxC = gathered_flat.view(audio_BxTxC.shape)
 
     # Create masks on the correct device
@@ -80,12 +84,16 @@ def apply_audio_delay(
 
     # If mask_bos, BOS; else if mask_pad, PAD; else original gather
     # All tensors should now be on the same device
-    result_BxTxC = torch.where(mask_bos, bos_tensor, torch.where(mask_pad, pad_tensor, gathered_BxTxC))
+    result_BxTxC = torch.where(
+        mask_bos, bos_tensor, torch.where(mask_pad, pad_tensor, gathered_BxTxC)
+    )
 
     return result_BxTxC
 
 
-def build_revert_indices(B: int, T: int, C: int, delay_pattern: tp.List[int]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
+def build_revert_indices(
+    B: int, T: int, C: int, delay_pattern: tp.List[int]
+) -> tp.Tuple[torch.Tensor, torch.Tensor]:
     """
     Precompute indices for the revert operation using PyTorch.
 
@@ -107,8 +115,12 @@ def build_revert_indices(B: int, T: int, C: int, delay_pattern: tp.List[int]) ->
         t_idx_BT1 + delay_arr.view(1, 1, C),
         torch.tensor(T - 1, device=device),
     )
-    b_idx_BxTxC = torch.broadcast_to(torch.arange(B, device=device).view(B, 1, 1), [B, T, C])
-    c_idx_BxTxC = torch.broadcast_to(torch.arange(C, device=device).view(1, 1, C), [B, T, C])
+    b_idx_BxTxC = torch.broadcast_to(
+        torch.arange(B, device=device).view(B, 1, 1), [B, T, C]
+    )
+    c_idx_BxTxC = torch.broadcast_to(
+        torch.arange(C, device=device).view(1, 1, C), [B, T, C]
+    )
 
     indices_BTCx3 = torch.stack(
         [
@@ -150,14 +162,20 @@ def revert_audio_delay(
     indices_BTCx3 = indices_BTCx3.to(device)
 
     # Using PyTorch advanced indexing (equivalent to tf.gather_nd or np equivalent)
-    gathered_flat = audio_BxTxC[indices_BTCx3[:, 0], indices_BTCx3[:, 1], indices_BTCx3[:, 2]]
-    gathered_BxTxC = gathered_flat.view(audio_BxTxC.size())  # Use .size() for robust reshaping
+    gathered_flat = audio_BxTxC[
+        indices_BTCx3[:, 0], indices_BTCx3[:, 1], indices_BTCx3[:, 2]
+    ]
+    gathered_BxTxC = gathered_flat.view(
+        audio_BxTxC.size()
+    )  # Use .size() for robust reshaping
 
     # Create pad_tensor on the correct device
     pad_tensor = torch.tensor(pad_value, dtype=audio_BxTxC.dtype, device=device)
     # Create T tensor on the correct device for comparison
     T_tensor = torch.tensor(T, device=device)
 
-    result_BxTxC = torch.where(t_idx_BxTxC >= T_tensor, pad_tensor, gathered_BxTxC)  # Changed np.where to torch.where
+    result_BxTxC = torch.where(
+        t_idx_BxTxC >= T_tensor, pad_tensor, gathered_BxTxC
+    )  # Changed np.where to torch.where
 
     return result_BxTxC
