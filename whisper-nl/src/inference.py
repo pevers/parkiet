@@ -8,7 +8,7 @@ import soundfile as sf
 import librosa
 import argparse
 import os
-
+from train_configurable import SPECIAL_TOKENS
 
 def load_model(checkpoint_path):
     """Load the fine-tuned Whisper model and processor"""
@@ -21,13 +21,16 @@ def load_model(checkpoint_path):
     )
     model.generation_config.suppress_tokens = []
     processor = AutoProcessor.from_pretrained(
-        "openai/whisper-large-v3", language="dutch", task="transcribe"
+        checkpoint_path
     )
 
     # Move to GPU if available
-    # device = torch.device("cpu")  # For debugging
+    #device = torch.device("cpu")  # For debugging
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
+
+    additional_special_tokens = processor.tokenizer.additional_special_tokens
+    print("Additional special tokens:", additional_special_tokens)
 
     print(f"Model loaded on {device}")
     return processor, model, device

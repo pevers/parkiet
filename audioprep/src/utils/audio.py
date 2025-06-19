@@ -1,7 +1,7 @@
 import subprocess
 from pathlib import Path
 from typing import List
-from schemas import SpeakerEvent
+from audioprep.generator.schemas import SpeakerEvent
 
 
 def get_audio_duration(audio_path: Path) -> float:

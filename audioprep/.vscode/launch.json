@@ -8,12 +8,24 @@
             "name": "Debug Chunker",
             "type": "debugpy",
             "request": "launch",
-            "program": "src/chunker.py",
+            "program": "audioprep/generator/chunker.py",
             "console": "integratedTerminal",
             "args": [
                 "../data/hoorspelen/test",
+                "../data/chunks/"
+            ]
+        },
+        {
+            "name": "Debug Whisper Transcriber",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "audioprep/generator/transcriber.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
                 "../data/chunks/",
-                "1"
+                "--model",
+                "../data/whisper-large-v3-dutch-cgn-prod/",
             ]
         }
     ]

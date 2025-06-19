@@ -1,5 +1,5 @@
 import json
-import sys
+import argparse
 import ulid
 from pathlib import Path
 from typing import Optional
@@ -8,7 +8,7 @@ import multiprocessing
 import time
 import torch
 
-from schemas import AudioChunk, ProcessedAudioData, SpeakerEvent
+from generator.schemas import AudioChunk, ProcessedAudioData, SpeakerEvent
 from utils.audio import (
     get_audio_duration,
     extract_audio_segment,
@@ -124,7 +124,11 @@ def create_chunks(
 
 
 def process_single_audio_file(
-    audio_file_path: Path, target_folder: Path
+    audio_file_path: Path, 
+    target_folder: Path,
+    window_size_sec: float = 30.0,
+    skip_start_sec: float = 120.0,
+    skip_end_sec: float = 180.0
 ) -> ProcessedAudioData:
     """
     Process a single audio file.
@@ -132,6 +136,9 @@ def process_single_audio_file(
     Args:
         audio_file_path: Path to the audio file
         target_folder: Target folder for output
+        window_size_sec: Size of sliding window in seconds
+        skip_start_sec: Time to skip from start
+        skip_end_sec: Time to skip from end
 
     Returns:
         ProcessedAudioData object
@@ -164,7 +171,8 @@ def process_single_audio_file(
 
         print("Creating audio chunks...")
         chunks, processing_window, audio_duration = create_chunks(
-            speaker_events, audio_file_path, output_dir_path
+            speaker_events, audio_file_path, output_dir_path,
+            window_size_sec, skip_start_sec, skip_end_sec
         )
 
         # Create comprehensive processed data
@@ -198,7 +206,12 @@ def process_single_audio_file(
 
 
 def preprocess_audio_batch(
-    source_folder: str, target_folder: str, max_workers: Optional[int] = None
+    source_folder: str, 
+    target_folder: str, 
+    max_workers: Optional[int] = None,
+    window_size_sec: float = 30.0,
+    skip_start_sec: float = 120.0,
+    skip_end_sec: float = 180.0
 ) -> None:
     """
     Main function to preprocess all audio files in a source folder.
@@ -207,6 +220,9 @@ def preprocess_audio_batch(
         source_folder: Path to the source folder containing audio files
         target_folder: Path to the target folder for output
         max_workers: Maximum number of worker threads (defaults to CPU count)
+        window_size_sec: Size of sliding window in seconds
+        skip_start_sec: Time to skip from start (will find natural break after this)
+        skip_end_sec: Time to skip from end (will find natural break before this)
     """
     source_path = Path(source_folder)
     target_path = Path(target_folder)
@@ -229,17 +245,22 @@ def preprocess_audio_batch(
 
     print(f"Found {len(audio_files)} audio files in: {source_path}")
     print(f"Target folder: {target_path}")
+    print(f"Window size: {window_size_sec}s, Skip start: {skip_start_sec}s, Skip end: {skip_end_sec}s")
 
     if max_workers is None:
         max_workers = min(multiprocessing.cpu_count(), len(audio_files))
 
     print(f"Using {max_workers} worker threads")
     results = []
+    
+    def process_with_params(audio_file):
+        return process_single_audio_file(
+            audio_file, target_path, window_size_sec, skip_start_sec, skip_end_sec
+        )
+    
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_file = {
-            executor.submit(
-                process_single_audio_file, audio_file, target_path
-            ): audio_file
+            executor.submit(process_with_params, audio_file): audio_file
             for audio_file in audio_files
         }
         for future in as_completed(future_to_file):
@@ -254,6 +275,12 @@ def preprocess_audio_batch(
         "successful_files": len([r for r in results if r]),
         "failed_files": len([r for r in results if not r.success]),
         "total_chunks": sum(len(r.chunks) for r in results if r.success),
+        "processing_params": {
+            "window_size_sec": window_size_sec,
+            "skip_start_sec": skip_start_sec,
+            "skip_end_sec": skip_end_sec,
+            "max_workers": max_workers
+        },
         "results": [result.model_dump() for result in results],
     }
 
@@ -276,21 +303,66 @@ def preprocess_audio_batch(
             print(f"- {Path(result.source_file).name}")
 
 
+def main():
+    """Main function with argument parsing."""
+    parser = argparse.ArgumentParser(
+        description="Create audio chunks from source files with speaker diarization",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s /path/to/source /path/to/target
+  %(prog)s /path/to/source /path/to/target --window-size 45 --workers 4
+  %(prog)s /path/to/source /path/to/target --skip-start 60 --skip-end 120
+        """
+    )
+    
+    parser.add_argument(
+        'source_folder',
+        help='Path to source folder containing audio files'
+    )
+    
+    parser.add_argument(
+        'target_folder',
+        help='Path to target folder for output chunks'
+    )
+    
+    parser.add_argument(
+        '--workers', '-w',
+        type=int,
+        default=None,
+        help='Maximum number of worker threads (default: min(CPU_count, file_count))'
+    )
+    
+    parser.add_argument(
+        '--window-size', '-s',
+        type=float,
+        default=30.0,
+        help='Size of sliding window in seconds (default: 30.0)'
+    )
+    
+    parser.add_argument(
+        '--skip-start',
+        type=float,
+        default=120.0,
+        help='Time to skip from start in seconds (default: 120.0)'
+    )
+    
+    parser.add_argument(
+        '--skip-end',
+        type=float,
+        default=180.0,
+        help='Time to skip from end in seconds (default: 180.0)'
+    )
+    args = parser.parse_args()
+    preprocess_audio_batch(
+        source_folder=args.source_folder,
+        target_folder=args.target_folder,
+        max_workers=args.workers,
+        window_size_sec=args.window_size,
+        skip_start_sec=args.skip_start,
+        skip_end_sec=args.skip_end
+    )
+
+
 if __name__ == "__main__":
-    if len(sys.argv) < 3 or len(sys.argv) > 4:
-        print(
-            f"Usage: python {sys.argv[0]} <source_folder> <target_folder> [max_workers]"
-        )
-        print(
-            "Example: python src/preprocess_audio.py ../data/podcasts ../data/processed"
-        )
-        print(
-            "Example: python src/preprocess_audio.py ../data/podcasts ../data/processed 4"
-        )
-        sys.exit(1)
-
-    source_folder = sys.argv[1]
-    target_folder = sys.argv[2]
-    max_workers = int(sys.argv[3]) if len(sys.argv) == 4 else None
-
-    preprocess_audio_batch(source_folder, target_folder, max_workers)
+    main()

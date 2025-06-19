@@ -21,7 +21,6 @@ class BasicTextNormalizer:
 
     def __call__(self, s: str):
         s = s.lower()
-        s = re.sub(r"[<\[][^>\]]*[>\]]", "", s)  # remove words between brackets
         s = self.clean(s).lower()
 
         if self.split_letters:

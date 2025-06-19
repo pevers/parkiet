@@ -25,6 +25,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+SPECIAL_TOKENS = ["[S1]", "[S2]", "[S3]", "[S4]", "[S5]", "[S6]", "[S7]", "[S8]", "[S9]", "[S10]", "(laughs)"]
 
 class WhisperDataCollator:
     """Data collator for Whisper training"""
@@ -70,7 +71,6 @@ class ConfigurableWhisperTrainer:
         # Initialize processor and model
         self.processor = None
         self.model = None
-        self.feature_extractor = None
         self.tokenizer = None
 
         # Text normalizer for evaluation
@@ -84,35 +84,25 @@ class ConfigurableWhisperTrainer:
     def setup_model_and_processor(self):
         """Initialize model, tokenizer, and feature extractor"""
         logger.info(f"Loading model and processor: {self.config.model_name}")
-
-        # Set device and dtype for optimal performance with whisper-large-v3
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
         # Load processor (combines feature extractor and tokenizer)
         self.processor = AutoProcessor.from_pretrained(self.config.model_name)
-
-        # Set language and task for the processor
         self.processor.tokenizer.set_prefix_tokens(
             language=self.config.language, task=self.config.task
         )
 
-        # For compatibility, also set individual components
-        self.feature_extractor = self.processor.feature_extractor
-        self.tokenizer = self.processor.tokenizer
+        # Add the special tokens to the tokenizer
+        self.processor.tokenizer.add_special_tokens(
+            {"additional_special_tokens": SPECIAL_TOKENS}
+        )
 
-        # Load model with optimized settings for whisper-large-v3
         self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
             self.config.model_name, low_cpu_mem_usage=True, use_safetensors=True
         )
-
-        # Move model to device
+        self.model.resize_token_embeddings(len(self.processor.tokenizer))
         self.model.to(device)
 
-        # Resize token embeddings if needed
-        if len(self.processor.tokenizer) > self.model.config.vocab_size:
-            self.model.resize_token_embeddings(len(self.processor.tokenizer))
-
-        # Model configuration optimized for whisper-large-v3
         self.model.generation_config.forced_decoder_ids = None
         self.model.generation_config.suppress_tokens = []
         self.model.generation_config.language = self.config.language
@@ -165,10 +155,7 @@ class ConfigurableWhisperTrainer:
             return cached_dataset
 
         def prepare_dataset(batch):
-            # Load and process audio
             audio = batch["audio"]
-
-            # Compute input features using the processor's feature extractor
             batch["input_features"] = self.processor.feature_extractor(
                 [x["array"] for x in audio],
                 sampling_rate=audio[0]["sampling_rate"],

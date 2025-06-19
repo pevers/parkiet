@@ -10,12 +10,11 @@ import argparse
 import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
-import subprocess
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import html
+from utils.audio import get_audio_duration, extract_audio_chunk
 
 # Configure logging
 logging.basicConfig(
@@ -23,12 +22,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+SPECIAL_TOKENS = {
+    "laughs": "(laughs)",
+}
+
 
 class CGNProcessorClean:
     """Processes CGN corpus data for Whisper fine-tuning with cleaned transcripts"""
 
-    def __init__(self, filter_inaudible: bool = True, max_inaudible_ratio: float = 0.3):
-        self.base_dir = Path("../data/CGN_2.0.3")
+    def __init__(self, filter_inaudible: bool = True, max_inaudible_ratio: float = 0.3, base_dir: str = "../data/CGN_2.0.3"):
+        self.base_dir = Path(base_dir)
         self.audio_dir = self.base_dir / "data/audio/wav"
         self.annot_dir = self.base_dir / "data/annot/xml/skp-ort"
         self.pri_dir = (
@@ -104,14 +107,14 @@ class CGNProcessorClean:
 
         return word_lower in laughter_markers
 
-    def clean_word(self, word: str) -> Optional[str]:
+    def clean_word(self, word: str) -> str | None:
         """Clean a word, returning None if it should be filtered out"""
         if not word or not word.strip():
             return None
 
         # Convert laughter to readable form
         if self.is_laughter_word(word):
-            return "(lacht)"
+            return SPECIAL_TOKENS["laughs"]
 
         # Remove if it's an inaudible marker
         if self.is_inaudible_word(word):
@@ -198,20 +201,31 @@ class CGNProcessorClean:
 
         return content
 
-    def clean_text(self, word_data_list: List[Dict]) -> Tuple[str, float]:
+    def clean_text(self, word_data_list: list[dict]) -> tuple[str, float]:
         """
-        Clean text by removing inaudible markers and converting laughter, including punctuation
+        Clean text by removing inaudible markers and converting laughter, including punctuation.
+        Insert speaker tags whenever the speaker changes, but remap them per chunk so the first speaker is [S1], the second [S2], etc.
         Returns: (cleaned_text, inaudible_ratio)
         """
         total_words = len(word_data_list)
         if total_words == 0:
             return "", 0.0
 
+        # Remap speakers per chunk
+        speaker_remap = {}
+        remap_counter = 1
+        for word_data in word_data_list:
+            speaker = word_data.get("speaker", None)
+            if speaker and speaker not in speaker_remap:
+                speaker_remap[speaker] = f"[S{remap_counter}]"
+                remap_counter += 1
+
         cleaned_parts = []
         inaudible_count = 0
         laughter_count = 0
         punctuation_added = 0
 
+        last_speaker = None
         for word_data in word_data_list:
             word = (
                 word_data.get("word", "") if isinstance(word_data, dict) else word_data
@@ -219,10 +233,17 @@ class CGNProcessorClean:
             punctuation = (
                 word_data.get("punctuation", "") if isinstance(word_data, dict) else ""
             )
+            speaker = word_data.get("speaker", None)
+            remapped_speaker = speaker_remap.get(speaker, speaker) if speaker else None
+
+            # Insert remapped speaker tag if speaker changes or at the start
+            if remapped_speaker and remapped_speaker != last_speaker:
+                cleaned_parts.append(remapped_speaker)
+                last_speaker = remapped_speaker
 
             if self.is_laughter_word(word):
                 laughter_count += 1
-                word_with_punct = "(lacht)"
+                word_with_punct = SPECIAL_TOKENS["laughs"]
                 if punctuation:
                     word_with_punct += punctuation
                     punctuation_added += 1
@@ -253,7 +274,7 @@ class CGNProcessorClean:
 
         return cleaned_text, inaudible_ratio
 
-    def parse_pri_file(self, pri_file: Path) -> Dict[str, str]:
+    def parse_pri_file(self, pri_file: Path) -> dict[str, str]:
         """Parse PRI file to extract punctuation marks mapped by word ID"""
         punctuation_map = {}
 
@@ -289,7 +310,7 @@ class CGNProcessorClean:
 
         return punctuation_map
 
-    def parse_xml_annotation(self, xml_file: Path, pri_file: Path = None) -> List[Dict]:
+    def parse_xml_annotation(self, xml_file: Path, pri_file: Path = None) -> list[dict]:
         """Parse CGN XML annotation file and extract word-level timestamps"""
 
         with gzip.open(xml_file, "rt", encoding="utf-8") as f:
@@ -306,9 +327,17 @@ class CGNProcessorClean:
         if pri_file and pri_file.exists():
             punctuation_map = self.parse_pri_file(pri_file)
 
+        speaker_map = {}
+
         # Extract all word elements with timestamps
         for tau in root.findall(".//tau"):
+            if tau.get("s", "") == "COMMENT":
+                # Skip comments
+                continue
             speaker = tau.get("s", "")
+            if speaker not in speaker_map:
+                speaker_map[speaker] = len(speaker_map)
+
             for tw in tau.findall(".//tw"):
                 word_text = tw.get("w", "")
                 word_id = tw.get("ref", "")
@@ -324,10 +353,10 @@ class CGNProcessorClean:
                 punctuation = punctuation_map.get(word_id, "")
 
                 word_data = {
+                    "speaker": f"[S{speaker_map[speaker]+1}]",
                     "word": word_text,
                     "start": float(tw.get("tb", 0)),
                     "end": float(tw.get("te", 0)),
-                    "speaker": speaker,
                     "is_inaudible": self.is_inaudible_word(word_text),
                     "is_laughter": self.is_laughter_word(word_text),
                     "punctuation": punctuation,  # Add punctuation info
@@ -339,7 +368,7 @@ class CGNProcessorClean:
         words.sort(key=lambda x: x["start"])
         return words
 
-    def create_chunks(self, words: List[Dict]) -> List[Dict]:
+    def create_chunks(self, words: list[dict]) -> list[dict]:
         """Create audio chunks respecting word boundaries and filtering inaudible content"""
         if not words:
             return []
@@ -381,7 +410,7 @@ class CGNProcessorClean:
 
         return chunks
 
-    def _finalize_chunk(self, chunk_data: Dict) -> Optional[Dict]:
+    def _finalize_chunk(self, chunk_data: dict) -> dict | None:
         """Finalize a chunk by cleaning text and applying filters"""
         # Pass the full word data (including punctuation) to clean_text
         cleaned_text, inaudible_ratio = self.clean_text(chunk_data["words"])
@@ -406,7 +435,19 @@ class CGNProcessorClean:
             self.stats["chunks_filtered_out"] += 1
             return None
 
-        # Create final chunk
+        # Determine if there is a speaker change in the chunk
+        speakers = [w.get("speaker") for w in chunk_data["words"] if w.get("speaker")]
+        unique_speakers = set(speakers)
+        speaker_change = len(unique_speakers) > 1
+
+        # Track the largest speaker count per chunk
+        speaker_count = len(unique_speakers)
+        if "max_speaker_count" not in self.stats:
+            self.stats["max_speaker_count"] = 0
+        if speaker_count > self.stats["max_speaker_count"]:
+            self.stats["max_speaker_count"] = speaker_count
+
+        # Create final chunk (no 'speaker' field)
         final_chunk = {
             "start": chunk_data["start"],
             "end": chunk_data["end"],
@@ -417,64 +458,15 @@ class CGNProcessorClean:
             ),
             "total_word_count": len(chunk_data["words"]),
             "laughter_count": len([w for w in chunk_data["words"] if w["is_laughter"]]),
+            "speaker_change": speaker_change,
+            "speaker_count": speaker_count,
         }
 
         return final_chunk
 
-    def get_audio_duration(self, audio_file: Path) -> Optional[float]:
-        """Get audio file duration using ffprobe"""
-        try:
-            cmd = [
-                "ffprobe",
-                "-v",
-                "quiet",
-                "-print_format",
-                "json",
-                "-show_format",
-                str(audio_file),
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode == 0:
-                info = json.loads(result.stdout)
-                return float(info["format"]["duration"])
-        except Exception as e:
-            logger.error(f"Error getting duration for {audio_file}: {e}")
-        return None
-
-    def extract_audio_chunk(
-        self, input_audio: Path, output_audio: Path, start_time: float, end_time: float
-    ) -> bool:
-        """Extract and convert audio chunk using ffmpeg"""
-        try:
-            duration = end_time - start_time
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(input_audio),
-                "-ss",
-                str(start_time),
-                "-t",
-                str(duration),
-                "-ar",
-                str(self.sample_rate),
-                "-ac",
-                str(self.channels),
-                "-c:a",
-                "pcm_s16le",
-                str(output_audio),
-            ]
-
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            return result.returncode == 0
-
-        except Exception as e:
-            logger.error(f"Error extracting audio chunk: {e}")
-            return False
-
     def process_file_pair(
         self, audio_file: Path, annotation_file: Path, component: str, region: str
-    ) -> List[Dict]:
+    ) -> list[dict] | None:
         """Process a single audio/annotation file pair"""
         file_id = audio_file.stem
         logger.info(f"Processing {component}/{region}/{file_id}")
@@ -489,7 +481,7 @@ class CGNProcessorClean:
             return []
 
         # Get audio duration
-        audio_duration = self.get_audio_duration(audio_file)
+        audio_duration = get_audio_duration(audio_file)
         if not audio_duration:
             logger.warning(f"Could not get duration for {audio_file}")
             return []
@@ -514,8 +506,8 @@ class CGNProcessorClean:
             chunk_audio_file = component_output_dir / f"{chunk_id}.wav"
 
             # Extract audio chunk
-            if self.extract_audio_chunk(
-                audio_file, chunk_audio_file, chunk["start"], chunk["end"]
+            if extract_audio_chunk(
+                audio_file, chunk_audio_file, chunk["start"], chunk["end"], self.sample_rate, self.channels
             ):
                 chunk_data = {
                     "audio_file": str(chunk_audio_file.relative_to(self.output_dir)),
@@ -540,7 +532,7 @@ class CGNProcessorClean:
 
         return processed_chunks
 
-    def find_file_pairs(self) -> List[Tuple[Path, Path, str, str]]:
+    def find_file_pairs(self) -> list[tuple[Path, Path, str, str]] | None:
         """Find matching audio/annotation file pairs"""
         pairs = []
 
@@ -549,7 +541,7 @@ class CGNProcessorClean:
             annot_comp_dir = self.annot_dir / component
 
             if not audio_comp_dir.exists() or not annot_comp_dir.exists():
-                logger.warning(f"Skipping {component} - directories not found")
+                logger.warning(f"Skipping {component} - directories not found {audio_comp_dir} or {annot_comp_dir}")
                 continue
 
             for region in self.regions:
@@ -558,7 +550,7 @@ class CGNProcessorClean:
 
                 if not audio_region_dir.exists() or not annot_region_dir.exists():
                     logger.warning(
-                        f"Skipping {component}/{region} - directories not found"
+                        f"Skipping {component}/{region} - directories not found {audio_region_dir} or {annot_region_dir}"
                     )
                     continue
 
@@ -613,9 +605,6 @@ class CGNProcessorClean:
                     logger.error(f"Failed to process {audio_file}: {e}")
                     failed_files.append(str(audio_file))
 
-                    # Exit, we want to parse everything without silently failing
-                    exit(1)
-
         # Save metadata
         self.save_metadata(all_chunks, failed_files)
 
@@ -630,7 +619,7 @@ class CGNProcessorClean:
         total_duration = sum(chunk["duration"] for chunk in all_chunks)
         logger.info(f"Total audio duration: {total_duration / 3600:.2f} hours")
 
-    def print_statistics(self, final_chunks: List[Dict]):
+    def print_statistics(self, final_chunks: list[dict] | None):
         """Print detailed statistics about the processing"""
         logger.info("=== Processing Statistics ===")
         logger.info(
@@ -690,7 +679,11 @@ class CGNProcessorClean:
                 f"Average laughter instances per chunk: {avg_laughter_per_chunk:.1f}"
             )
 
-    def save_metadata(self, chunks: List[Dict], failed_files: List[str]):
+        # Print the largest speaker count found in any chunk
+        if "max_speaker_count" in self.stats:
+            logger.info(f"Largest speaker count in any chunk: {self.stats['max_speaker_count']}")
+
+    def save_metadata(self, chunks: list[dict] | None, failed_files: list[str] | None):
         """Save processing metadata and create Whisper-compatible dataset files"""
 
         # Save complete metadata with statistics
@@ -756,21 +749,18 @@ def main():
     parser.add_argument(
         "--workers", type=int, default=4, help="Number of parallel workers (default: 4)"
     )
+    parser.add_argument(
+        "--base-dir",
+        type=str,
+        default="../data/CGN_2.0.3",
+        help="Base directory for CGN data (default: ../data/CGN_2.0.3)",
+    )
 
     args = parser.parse_args()
-
-    # Check dependencies
-    try:
-        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
-        subprocess.run(["ffprobe", "-version"], capture_output=True, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        logger.error("ffmpeg/ffprobe not found. Please install ffmpeg.")
-        return
-
-    # Create processor
     processor = CGNProcessorClean(
         filter_inaudible=not args.keep_inaudible,
         max_inaudible_ratio=args.max_inaudible_ratio,
+        base_dir=args.base_dir,
     )
 
     # Process all files

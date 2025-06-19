@@ -17,6 +17,12 @@ Strategy to collect sensible data:
 uv run python src/download_podcasts.py
 ```
 
+## Prerequisites
+
+```
+sudo apt-get install libasound-dev portaudio19-dev libportaudio2 libportaudiocpp0
+```
+
 ## Overview
 
 A bit complex but there are some experiments in this folder.
