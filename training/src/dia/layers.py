@@ -925,19 +925,7 @@ class Decoder(nn.Module):
         return logits_BxTxCxV.to(torch.float32)
 
 
-class DiaModel(
-    nn.Module,
-    PyTorchModelHubMixin,
-    repo_url="https://github.com/nari-labs/dia",
-    pipeline_tag="text-to-speech",
-    license="apache-2.0",
-    coders={
-        DiaConfig: (
-            lambda x: x.model_dump(),
-            lambda data: DiaConfig.model_validate(data),
-        ),
-    },
-):
+class DiaModel(nn.Module):
     """PyTorch Dia Model using DenseGeneral."""
 
     def __init__(self, config: DiaConfig, compute_dtype: torch.dtype):

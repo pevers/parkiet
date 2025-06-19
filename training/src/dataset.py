@@ -67,18 +67,7 @@ class AudioPromptDataset(Dataset):
 
         # Find all audio files and match with prompts
         for audio_file in self.audio_dir.iterdir():
-            if not audio_file.is_file() or not audio_file.suffix.lower() in [
-                ".mp3",
-                ".wav",
-                ".flac",
-                ".m4a",
-            ]:
-                continue
-
-            # Get sample ID from filename (without extension)
             sample_id = audio_file.stem
-
-            # Check if we have a prompt for this sample
             if sample_id in prompts_data:
                 sample = {
                     "audio_path": str(audio_file),
