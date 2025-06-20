@@ -1,0 +1,35 @@
+{
+    "folders": [
+        {
+            "name": "parkiet",
+            "path": "./parkiet"
+        },
+        {
+            "name": "whisper-nl", 
+            "path": "./whisper-nl"
+        },
+        {
+            "name": "root",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "python.defaultInterpreterPath": "./parkiet/.venv/bin/python",
+        "python.terminal.activateEnvironment": true,
+        "files.exclude": {
+            "**/__pycache__": true,
+            "**/*.pyc": true,
+            "**/.pytest_cache": true,
+            "**/node_modules": true,
+            "**/.git": false
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-python.python",
+            "ms-python.debugpy",
+            "ms-python.pylint",
+            "ms-python.black-formatter"
+        ]
+    }
+} 

@@ -51,10 +51,7 @@ class DatasetLoader:
         data = [item for item in data if Path(item["audio"]).exists()]
         logger.info(f"Loaded {len(data)} valid audio samples")
 
-        # Create dataset
         dataset = Dataset.from_list(data)
-
-        # Cast audio column
         dataset = dataset.cast_column("audio", Audio(sampling_rate=16000))
 
         return dataset
