@@ -30,7 +30,12 @@ SPECIAL_TOKENS = {
 class CGNProcessorClean:
     """Processes CGN corpus data for Whisper fine-tuning with cleaned transcripts"""
 
-    def __init__(self, filter_inaudible: bool = True, max_inaudible_ratio: float = 0.3, base_dir: str = "../data/CGN_2.0.3"):
+    def __init__(
+        self,
+        filter_inaudible: bool = True,
+        max_inaudible_ratio: float = 0.3,
+        base_dir: str = "../data/CGN_2.0.3",
+    ):
         self.base_dir = Path(base_dir)
         self.audio_dir = self.base_dir / "data/audio/wav"
         self.annot_dir = self.base_dir / "data/annot/xml/skp-ort"
@@ -353,7 +358,7 @@ class CGNProcessorClean:
                 punctuation = punctuation_map.get(word_id, "")
 
                 word_data = {
-                    "speaker": f"[S{speaker_map[speaker]+1}]",
+                    "speaker": f"[S{speaker_map[speaker] + 1}]",
                     "word": word_text,
                     "start": float(tw.get("tb", 0)),
                     "end": float(tw.get("te", 0)),
@@ -507,7 +512,12 @@ class CGNProcessorClean:
 
             # Extract audio chunk
             if extract_audio_chunk(
-                audio_file, chunk_audio_file, chunk["start"], chunk["end"], self.sample_rate, self.channels
+                audio_file,
+                chunk_audio_file,
+                chunk["start"],
+                chunk["end"],
+                self.sample_rate,
+                self.channels,
             ):
                 chunk_data = {
                     "audio_file": str(chunk_audio_file.relative_to(self.output_dir)),
@@ -541,7 +551,9 @@ class CGNProcessorClean:
             annot_comp_dir = self.annot_dir / component
 
             if not audio_comp_dir.exists() or not annot_comp_dir.exists():
-                logger.warning(f"Skipping {component} - directories not found {audio_comp_dir} or {annot_comp_dir}")
+                logger.warning(
+                    f"Skipping {component} - directories not found {audio_comp_dir} or {annot_comp_dir}"
+                )
                 continue
 
             for region in self.regions:
@@ -605,12 +617,8 @@ class CGNProcessorClean:
                     logger.error(f"Failed to process {audio_file}: {e}")
                     failed_files.append(str(audio_file))
 
-        # Save metadata
         self.save_metadata(all_chunks, failed_files)
-
-        # Print statistics
         self.print_statistics(all_chunks)
-
         logger.info(f"Processing complete!")
         logger.info(f"Total chunks created: {len(all_chunks)}")
         logger.info(f"Failed files: {len(failed_files)}")
@@ -681,7 +689,9 @@ class CGNProcessorClean:
 
         # Print the largest speaker count found in any chunk
         if "max_speaker_count" in self.stats:
-            logger.info(f"Largest speaker count in any chunk: {self.stats['max_speaker_count']}")
+            logger.info(
+                f"Largest speaker count in any chunk: {self.stats['max_speaker_count']}"
+            )
 
     def save_metadata(self, chunks: list[dict] | None, failed_files: list[str] | None):
         """Save processing metadata and create Whisper-compatible dataset files"""
@@ -762,8 +772,6 @@ def main():
         max_inaudible_ratio=args.max_inaudible_ratio,
         base_dir=args.base_dir,
     )
-
-    # Process all files
     processor.process_all_files(max_workers=args.workers)
 
 

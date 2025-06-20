@@ -6,6 +6,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 def get_audio_duration(audio_file: Path) -> Optional[float]:
     """Get audio file duration using ffprobe"""
     try:
@@ -25,6 +26,7 @@ def get_audio_duration(audio_file: Path) -> Optional[float]:
     except Exception as e:
         logger.error(f"Error getting duration for {audio_file}: {e}")
     return None
+
 
 def extract_audio_chunk(
     input_audio: Path,
@@ -58,4 +60,4 @@ def extract_audio_chunk(
         return result.returncode == 0
     except Exception as e:
         logger.error(f"Error extracting audio chunk: {e}")
-        return False 
+        return False

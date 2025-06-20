@@ -1,0 +1,50 @@
+{
+    "data": {
+      "audio_bos_value": 1026,
+      "audio_eos_value": 1024,
+      "audio_length": 3072,
+      "audio_pad_value": 1025,
+      "channels": 9,
+      "delay_pattern": [
+        0,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "text_length": 1024,
+      "text_pad_value": 0
+    },
+    "model": {
+      "decoder": {
+        "cross_head_dim": 128,
+        "cross_query_heads": 12,
+        "gqa_head_dim": 128,
+        "gqa_query_heads": 12,
+        "kv_heads": 4,
+        "n_embd": 2048,
+        "n_hidden": 8192,
+        "n_layer": 16
+      },
+      "dropout": 0.0,
+      "encoder": {
+        "head_dim": 128,
+        "n_embd": 1024,
+        "n_head": 16,
+        "n_hidden": 4096,
+        "n_layer": 10
+      },
+      "normalization_layer_epsilon": 1e-05,
+      "rope_max_timescale": 10000,
+      "rope_min_timescale": 1,
+      "src_vocab_size": 256,
+      "tgt_vocab_size": 1028,
+      "weight_dtype": "float32"
+    },
+    "training": {},
+    "version": "0.1"
+  }

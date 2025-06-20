@@ -25,7 +25,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-SPECIAL_TOKENS = ["[S1]", "[S2]", "[S3]", "[S4]", "[S5]", "[S6]", "[S7]", "[S8]", "[S9]", "[S10]", "(laughs)"]
+SPECIAL_TOKENS = [
+    "[S1]",
+    "[S2]",
+    "[S3]",
+    "[S4]",
+    "[S5]",
+    "[S6]",
+    "[S7]",
+    "[S8]",
+    "[S9]",
+    "[S10]",
+    "(laughs)",
+]
+
 
 class WhisperDataCollator:
     """Data collator for Whisper training"""
