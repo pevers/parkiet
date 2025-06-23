@@ -3,8 +3,6 @@ import argparse
 import logging
 from pathlib import Path
 from typing import Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import multiprocessing
 import time
 import torch
 from parkiet.audioprep.schemas import (
@@ -139,7 +137,8 @@ def create_chunks(
 def process_single_audio_file(
     audio_file_path: Path,
     target_folder: Path,
-    whisper_checkpoint_path: str,
+    speaker_extractor: SpeakerExtractor,
+    transcriber: Transcriber,
     window_size_sec: float = 30.0,
     skip_start_sec: float = 120.0,
     skip_end_sec: float = 180.0,
@@ -150,7 +149,8 @@ def process_single_audio_file(
     Args:
         audio_file_path: Path to the audio file
         target_folder: Target folder for output
-        whisper_checkpoint_path: Path to the Whisper checkpoint
+        speaker_extractor: SpeakerExtractor instance
+        transcriber: Transcriber instance
         window_size_sec: Size of sliding window in seconds
         skip_start_sec: Time to skip from start
         skip_end_sec: Time to skip from end
@@ -159,9 +159,6 @@ def process_single_audio_file(
         ProcessedAudioFile object
     """
     start_time = time.time()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    speaker_extractor = SpeakerExtractor(device)
-    transcriber = Transcriber(whisper_checkpoint_path, device)
 
     try:
         # Create output directory based on audio file name (without extension)
@@ -251,7 +248,6 @@ def preprocess_audio_batch(
     source_folder: str,
     target_folder: str,
     whisper_checkpoint_path: str,
-    max_workers: Optional[int] = None,
     window_size_sec: float = 30.0,
     skip_start_sec: float = 120.0,
     skip_end_sec: float = 180.0,
@@ -263,7 +259,6 @@ def preprocess_audio_batch(
         source_folder: Path to the source folder containing audio files
         target_folder: Path to the target folder for output
         whisper_checkpoint_path: Path to the Whisper checkpoint
-        max_workers: Maximum number of worker threads (defaults to CPU count)
         window_size_sec: Size of sliding window in seconds
         skip_start_sec: Time to skip from start (will find natural break after this)
         skip_end_sec: Time to skip from end (will find natural break before this)
@@ -291,44 +286,37 @@ def preprocess_audio_batch(
         f"Window size: {window_size_sec}s, Skip start: {skip_start_sec}s, Skip end: {skip_end_sec}s"
     )
 
-    if max_workers is None:
-        max_workers = min(multiprocessing.cpu_count(), len(audio_files))
-
-    log.info(f"Using {max_workers} worker threads")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    log.info(f"Using device: {device}")
+    speaker_extractor = SpeakerExtractor(device)
+    transcriber = Transcriber(whisper_checkpoint_path, device)
     results = []
 
-    def process_with_params(audio_file):
-        return process_single_audio_file(
+    # Process each audio file sequentially
+    for audio_file in audio_files:
+        result = process_single_audio_file(
             audio_file,
             target_path,
-            whisper_checkpoint_path,
+            speaker_extractor,
+            transcriber,
             window_size_sec,
             skip_start_sec,
             skip_end_sec,
         )
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_file = {
-            executor.submit(process_with_params, audio_file): audio_file
-            for audio_file in audio_files
-        }
-        for future in as_completed(future_to_file):
-            result = future.result()
-            results.append(result)
+        results.append(result)
 
     # Generate overview JSON
     overview = {
         "source_folder": str(source_path),
         "target_folder": str(target_path),
         "total_files_processed": len(results),
-        "successful_files": len([r for r in results if r]),
+        "successful_files": len([r for r in results if r.success]),
         "failed_files": len([r for r in results if not r.success]),
         "total_chunks": sum(len(r.chunks) for r in results if r.success),
         "processing_params": {
             "window_size_sec": window_size_sec,
             "skip_start_sec": skip_start_sec,
             "skip_end_sec": skip_end_sec,
-            "max_workers": max_workers,
         },
         "results": [result.model_dump() for result in results],
     }
@@ -375,13 +363,6 @@ Examples:
     parser.add_argument("target_folder", help="Path to target folder for output chunks")
 
     parser.add_argument(
-        "--workers",
-        "-w",
-        type=int,
-        default=None,
-        help="Maximum number of worker threads (default: min(CPU_count, file_count))",
-    )
-    parser.add_argument(
         "--whisper-checkpoint-path",
         "-c",
         type=str,
@@ -415,7 +396,6 @@ Examples:
     preprocess_audio_batch(
         source_folder=args.source_folder,
         target_folder=args.target_folder,
-        max_workers=args.workers,
         window_size_sec=args.window_size,
         skip_start_sec=args.skip_start,
         skip_end_sec=args.skip_end,

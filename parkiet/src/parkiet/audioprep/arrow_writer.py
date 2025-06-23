@@ -24,9 +24,11 @@ def convert_to_arrow_table(dia: Dia, target_folder: Path) -> None:
     log.info(f"Found {len(json_files)} processed files to convert")
 
     # Collect all chunk data
+    # TODO: We should process in parallel and we should prevent huge memory usage
     all_chunk_data = []
     total_chunks = 0
     for json_file in json_files:
+        log.info(f"Processing {json_file}")
         try:
             with open(json_file, "r") as f:
                 file_data = json.load(f)
@@ -50,29 +52,24 @@ def convert_to_arrow_table(dia: Dia, target_folder: Path) -> None:
         return
 
     log.info(f"Creating Arrow table with {total_chunks} chunks...")
-    try:
-        column_data = {}
-        schema = _define_arrow_schema()
+    column_data = {}
+    schema = _define_arrow_schema()
 
-        for field in schema:
-            column_data[field.name] = []
+    for field in schema:
+        column_data[field.name] = []
 
-        # Populate column data from row data
-        for row in all_chunk_data:
-            for column_name in column_data.keys():
-                column_data[column_name].append(row[column_name])
+    # Populate column data from row data
+    for row in all_chunk_data:
+        for column_name in column_data.keys():
+            column_data[column_name].append(row[column_name])
 
-        table = pa.table(column_data, schema=schema)
+    table = pa.table(column_data, schema=schema)
 
-        arrow_path = target_folder / "chunks_dataset.parquet"
-        pq.write_table(table, arrow_path, compression="snappy")
+    arrow_path = target_folder / "chunks_dataset.parquet"
+    pq.write_table(table, arrow_path, compression="snappy")
 
-        log.info(f"Arrow table saved to: {arrow_path}")
-        log.info(f"Table shape: {table.shape}")
-
-    except Exception as e:
-        log.error(f"Error creating Arrow table: {e}")
-        raise
+    log.info(f"Arrow table saved to: {arrow_path}")
+    log.info(f"Table shape: {table.shape}")
 
 
 def _define_arrow_schema() -> pa.Schema:

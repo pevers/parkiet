@@ -10,17 +10,14 @@ def main():
         if torch.backends.mps.is_available()
         else "cpu"
     )
+    text = "[S1] Dia is an open weights text to dialogue model. [S2] You get full control over scripts and voices. [S1] Wow. Amazing. (laughs) [S2] Try it now on Git hub or Hugging Face."
     model = Dia.from_local(
         config_path="config.json",
-        checkpoint_path="weights/dia-v0_1-epoch100.pth",
+        checkpoint_path="weights/dia-v0_1.pth",
         compute_dtype=ComputeDtype.BFLOAT16,
         device=device,
     )
-    audio = model.generate(
-        text="[S1] in Alkmaar. [S2] school. daar lopen we tegenaan zo. dat is de Sint-Mattheusschool. (laughs). [S1] hier woont Dave eind jaren zeventig begin jaren tachtig samen met zijn vader Dirk zijn vijf jaar jongere broertje Roy en zijn moeder Jos. Jos is anders dan andere moeders. [S2] je zag natuurlijk dat andere kinderen dat hun ouders wel naar ouderenavonden gingen. en uh dat hoorde je ook. en mijn",
-        temperature=0.0,
-        cfg_scale=1.0,
-    )
+    audio = model.generate(text=text)
     model.save_audio("output.wav", audio)
 
 

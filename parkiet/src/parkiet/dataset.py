@@ -6,8 +6,24 @@ from pathlib import Path
 import logging
 
 from parkiet.dia.config import DiaConfig
+from parkiet.dia.model import Dia
 
 log = logging.getLogger(__name__)
+
+
+class TestSampleDataset(Dataset):
+    def __init__(self, audio_input: torch.Tensor, encoded_prompt: torch.Tensor):
+        self.audio_input = audio_input
+        self.encoded_prompt = encoded_prompt
+
+    def __len__(self) -> int:
+        return 5000
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        return {
+            "text": self.encoded_prompt,
+            "audio": self.audio_input,
+        }
 
 
 class AudioTextDataset(Dataset):
@@ -18,6 +34,7 @@ class AudioTextDataset(Dataset):
         parquet_path: str | Path,
         config: DiaConfig,
         max_audio_length: int | None = None,
+        max_text_length: int | None = None,
     ):
         """
         Initialize the dataset.
@@ -30,7 +47,7 @@ class AudioTextDataset(Dataset):
         self.parquet_path = Path(parquet_path)
         self.config = config
         self.max_audio_length = max_audio_length or config.data.audio_length
-
+        self.max_text_length = max_text_length or config.data.text_length
         if not self.parquet_path.exists():
             raise FileNotFoundError(f"Parquet file not found: {self.parquet_path}")
 
@@ -94,18 +111,14 @@ class AudioTextDataset(Dataset):
         # Convert to bytes and replace special tokens
         byte_text = text.encode("utf-8")
         # TODO: Data contains speaker tags up to [S4], we should fix this!
-        replaced_bytes = byte_text.replace(b"[S1]", b"\x01").replace(b"[S2]", b"\x02")
+        replaced_bytes = (
+            byte_text.replace(b"[S1]", b"\x01")
+            .replace(b"[S2]", b"\x02")
+            .replace(b"[S3]", b"\x03")
+            .replace(b"[S4]", b"\x04")
+        )
         text_tokens = list(replaced_bytes)
-
-        # Truncate or pad to fixed length
-        if len(text_tokens) > self.text_length:
-            text_tokens = text_tokens[: self.text_length]
-        elif len(text_tokens) < self.text_length:
-            text_tokens.extend(
-                [self.text_pad_value] * (self.text_length - len(text_tokens))
-            )
-
-        return torch.tensor(text_tokens, dtype=torch.long)
+        return torch.tensor(text_tokens[: self.max_text_length], dtype=torch.long)
 
     def _decode_audio(
         self, encoded_audio: np.ndarray, encoded_audio_shape: np.ndarray
@@ -119,8 +132,6 @@ class AudioTextDataset(Dataset):
 
         Returns:
             Audio tensor of shape [max_audio_length, channels]
-
-        TODO: Do padding and BOS in this method or in compute_loss ?
         """
         # Reconstruct the original tensor
         audio_tensor = torch.tensor(encoded_audio, dtype=torch.long).reshape(
@@ -165,6 +176,7 @@ def create_dataloader(
     num_workers: int = 4,
     pin_memory: bool = True,
     max_audio_length: int | None = None,
+    max_text_length: int | None = None,
 ) -> torch.utils.data.DataLoader:
     """
     Create a DataLoader for the AudioTextDataset.
@@ -185,6 +197,7 @@ def create_dataloader(
         parquet_path=parquet_path,
         config=config,
         max_audio_length=max_audio_length,
+        max_text_length=max_text_length,
     )
 
     return torch.utils.data.DataLoader(
@@ -194,4 +207,26 @@ def create_dataloader(
         num_workers=num_workers,
         pin_memory=pin_memory,
         drop_last=True,  # Drop last incomplete batch for consistent training
+    )
+
+
+def create_test_dataloader(
+    dia: Dia,
+    batch_size: int = 4,
+    shuffle: bool = True,
+    num_workers: int = 1,
+    pin_memory: bool = True,
+) -> torch.utils.data.DataLoader:
+    encoded_audio = dia.load_audio("test/hello_world.mp3").cpu()
+    prompt = "[S1] Hello world, it is nice to meet you!"
+    encoded_prompt = dia._encode_text(prompt).cpu()
+    dataset = TestSampleDataset(
+        audio_input=encoded_audio.cpu(), encoded_prompt=encoded_prompt.cpu()
+    )
+    return torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
     )
