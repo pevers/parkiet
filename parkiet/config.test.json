@@ -28,7 +28,7 @@
         "kv_heads": 4,
         "n_embd": 2048,
         "n_hidden": 8192,
-        "n_layer": 12
+        "n_layer": 6
       },
       "dropout": 0.0,
       "encoder": {
@@ -36,7 +36,7 @@
         "n_embd": 1024,
         "n_head": 16,
         "n_hidden": 4096,
-        "n_layer": 8
+        "n_layer": 4
       },
       "normalization_layer_epsilon": 1e-05,
       "rope_max_timescale": 10000,

@@ -4,8 +4,11 @@ Parkiet is a fine-tuned version of Parakeet on Dutch audio data and builds upon 
 
 ## Setup
 
+You can install dependencies with the following command. Use the `--extra cuda` flag to install the CUDA dependencies.
+Use the `--extra tpu` flag to install the TPU dependencies.
+
 ```bash
-uv sync
+uv sync --extra cuda
 ```
 
 Download the weights:
@@ -19,6 +22,10 @@ wget https://huggingface.co/nari-labs/Dia-1.6B/resolve/main/dia-v0_1.pth?downloa
 ```bash
 sudo apt-get install libasound-dev portaudio19-dev libportaudio2 libportaudiocpp0
 ```
+
+## JAX
+
+The PyTorch model was ported to JAX to run it on Google Research TPUs.
 
 ## Data Collection Strategy
 

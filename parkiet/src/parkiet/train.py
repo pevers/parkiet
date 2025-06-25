@@ -13,12 +13,12 @@ from parkiet.dia.training.state import DecoderTrainingState, EncoderTrainingStat
 
 class TrainingConfig:
     def __init__(self, **kwargs):
-        self.batch_size: int = kwargs.get("batch_size", 1)
-        self.learning_rate: float = kwargs.get("learning_rate", 5e-4)
-        self.warmup_steps: int = kwargs.get("warmup_steps", 1000)
-        self.total_steps: int = kwargs.get("total_steps", 100_000)
+        self.batch_size: int = kwargs.get("batch_size", 8)
+        self.learning_rate: float = kwargs.get("learning_rate", 1e-4)
+        self.warmup_steps: int = kwargs.get("warmup_steps", 100)
+        self.total_steps: int = kwargs.get("total_steps", 2000)
         self.gradient_accumulation_steps: int = kwargs.get(
-            "gradient_accumulation_steps", 1
+            "gradient_accumulation_steps", 8
         )
         self.checkpoint_dir: str = kwargs.get("checkpoint_dir", "weights")
         self.checkpoint_every_steps: int = kwargs.get("checkpoint_every_steps", 500)
@@ -66,14 +66,17 @@ def compute_loss(
     Returns:
         Dictionary containing loss values and metrics
     """
-    device = dia.device 
+
+    # TODO: We need to dropout 15% of the text samples in the batch
+
+    device = dia.device
     model = dia.model
     batch_size = text_tokens.shape[0]
     audio_pad_value = model.config.data.audio_pad_value
 
     # Pad text input, encoding is already done
     text_tokens = dia._pad_text_input(text_tokens).squeeze(1)
-    
+
     # Encode text
     enc_state = EncoderTrainingState.new(model.config, text_tokens)
     encoder_outputs = model.encoder(text_tokens, enc_state)
@@ -105,7 +108,11 @@ def compute_loss(
 
     # Output of the audio is the delayed input shifted by one with EOS
     audio_target = tokens[:, 1:, :]
-    eos_token = torch.full((batch_size, 1, model.config.data.channels), model.config.data.audio_eos_value, device=device)
+    eos_token = torch.full(
+        (batch_size, 1, model.config.data.channels),
+        model.config.data.audio_eos_value,
+        device=device,
+    )
     audio_target = torch.cat([audio_target, eos_token], dim=1)
 
     # Calculate loss
@@ -129,10 +136,7 @@ def compute_loss(
 
 
 def evaluate_and_generate_sample(
-    dia: Dia, 
-    step: int, 
-    prompt: str, 
-    output_dir: str = "output_samples"
+    dia: Dia, step: int, prompt: str, output_dir: str = "output_samples"
 ):
     """Generate a sample from the model and save it to a file."""
     model = dia.model
@@ -156,37 +160,44 @@ def evaluate_and_generate_sample(
 
 def main():
     training_config = TrainingConfig()
-    
+
     # Create TensorBoard writer
     os.makedirs(training_config.log_dir, exist_ok=True)
     writer = SummaryWriter(log_dir=training_config.log_dir)
-    
-    # dia_config = DiaConfig.load(
-    #     "config.test.json"
-    # )
-    # dia = Dia(config=dia_config, compute_dtype=ComputeDtype.BFLOAT16, device=training_config.device, load_dac=True)
-    # dia.model.to(training_config.device)
-    # dia._load_dac_model()
-    
-    dia = Dia.from_local(
-        config_path="config.json",
-        checkpoint_path="weights/dia-v0_1.pth",
+
+    dia_config = DiaConfig.load("config.test.json")
+    dia = Dia(
+        config=dia_config,
         compute_dtype=ComputeDtype.BFLOAT16,
         device=training_config.device,
         load_dac=True,
     )
+    dia.model.to(training_config.device)
+    dia._load_dac_model()
+
+    # dia = Dia.from_local(
+    #     config_path="config.json",
+    #     checkpoint_path="weights/dia-v0_1.pth",
+    #     compute_dtype=ComputeDtype.BFLOAT16,
+    #     device=training_config.device,
+    #     load_dac=True,
+    # )
     model = dia.model
 
     # Log model configuration to TensorBoard
     writer.add_text("Config/Model", str(dia.config))
     writer.add_text("Config/Training", str(vars(training_config)))
 
+    # Try freezing all layers except the output projection, will only work for English models but might validate the training loop
+    # for n, p in model.named_parameters():
+    #     p.requires_grad = n.startswith("decoder.logits_dense")
+
     # Initialize optimizer
     optimizer = optim.AdamW(
-        model.parameters(),
+        filter(lambda p: p.requires_grad, model.parameters()),
         lr=training_config.learning_rate,
         betas=(0.9, 0.95),
-        weight_decay=0.1,
+        weight_decay=0.01,
     )
 
     # Initialize data loader
@@ -221,27 +232,23 @@ def main():
     # Training loop
     model.train()
     global_step = 0
-    
+
     train_iter = iter(dummy_loader)
     pbar = tqdm(initial=global_step, total=total_training_steps, desc="Training")
-    
+
     while global_step < total_training_steps:
         optimizer.zero_grad()
-        
+
         batch_loss = 0.0
         for _ in range(training_config.gradient_accumulation_steps):
             try:
                 batch = next(train_iter)
             except StopIteration:
-                train_iter = iter(train_loader)
+                train_iter = iter(dummy_loader)
                 batch = next(train_iter)
             text_tokens = batch["text"].to(training_config.device)
             audio_tokens = batch["audio"].to(training_config.device)
-            loss_dict = compute_loss(
-                dia,
-                text_tokens,
-                audio_tokens
-            )
+            loss_dict = compute_loss(dia, text_tokens, audio_tokens)
             loss = loss_dict["loss"] / training_config.gradient_accumulation_steps
             loss.backward()
             batch_loss += loss.item()
@@ -252,12 +259,12 @@ def main():
             if p.grad is not None:
                 param_norm = p.grad.data.norm(2)
                 total_norm += param_norm.item() ** 2
-        total_norm = total_norm ** (1. / 2)
+        total_norm = total_norm ** (1.0 / 2)
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         scheduler.step()
-        
+
         global_step += 1
         pbar.update(1)
 
@@ -273,19 +280,22 @@ def main():
             evaluate_and_generate_sample(
                 dia=dia,
                 step=global_step,
-                prompt="[S1] Hello world, it is nice to meet you!",
-                output_dir="output_samples"
+                prompt="[S1] Hey, did you see that movie today?",
+                output_dir="output_samples",
             )
 
         # Save checkpoint
-        if global_step > 0 and global_step % training_config.checkpoint_every_steps == 0:
+        if (
+            global_step > 0
+            and global_step % training_config.checkpoint_every_steps == 0
+        ):
             os.makedirs(training_config.checkpoint_dir, exist_ok=True)
             checkpoint_path = os.path.join(
                 training_config.checkpoint_dir, f"dia-v0_1-step{global_step}.pth"
             )
             torch.save(model.state_dict(), checkpoint_path)
             print(f"Saved checkpoint to {checkpoint_path}")
-            
+
     pbar.close()
 
     # Save final checkpoint after training is complete
@@ -296,7 +306,7 @@ def main():
     )
     torch.save(model.state_dict(), final_checkpoint_path)
     print(f"Training completed. Saved final checkpoint to {final_checkpoint_path}")
-    
+
     # Close TensorBoard writer
     writer.close()
     print(f"TensorBoard logs saved to {training_config.log_dir}")

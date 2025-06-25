@@ -10,11 +10,10 @@ def main():
         if torch.backends.mps.is_available()
         else "cpu"
     )
-    text = "[S1] Dia is an open weights text to dialogue model. [S2] You get full control over scripts and voices. [S1] Wow. Amazing. (laughs) [S2] Try it now on Git hub or Hugging Face."
+    text = "[S1] Honestly, I could use another coffee right now."
     model = Dia.from_local(
         config_path="config.json",
         checkpoint_path="weights/dia-v0_1.pth",
-        compute_dtype=ComputeDtype.BFLOAT16,
         device=device,
     )
     audio = model.generate(text=text)

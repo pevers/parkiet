@@ -12,17 +12,19 @@ log = logging.getLogger(__name__)
 
 
 class TestSampleDataset(Dataset):
-    def __init__(self, audio_input: torch.Tensor, encoded_prompt: torch.Tensor):
-        self.audio_input = audio_input
-        self.encoded_prompt = encoded_prompt
+    """Inefficient data sampler just to check the training loop."""
+
+    def __init__(self, samples: list[tuple[torch.Tensor, torch.Tensor]]):
+        self.samples = samples
 
     def __len__(self) -> int:
-        return 5000
+        return len(self.samples)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        audio_input, encoded_prompt = self.samples[idx]
         return {
-            "text": self.encoded_prompt,
-            "audio": self.audio_input,
+            "text": encoded_prompt,
+            "audio": audio_input,
         }
 
 
@@ -217,12 +219,14 @@ def create_test_dataloader(
     num_workers: int = 1,
     pin_memory: bool = True,
 ) -> torch.utils.data.DataLoader:
-    encoded_audio = dia.load_audio("test/hello_world.mp3").cpu()
-    prompt = "[S1] Hello world, it is nice to meet you!"
-    encoded_prompt = dia._encode_text(prompt).cpu()
-    dataset = TestSampleDataset(
-        audio_input=encoded_audio.cpu(), encoded_prompt=encoded_prompt.cpu()
-    )
+    samples = []
+    for file in Path("samples").glob("*.txt"):
+        with open(file, "r") as f:
+            prompt = f.read()
+        encoded_audio = dia.load_audio(file.with_suffix(".mp3")).cpu()
+        encoded_prompt = dia._encode_text(prompt).cpu()
+        samples.append((encoded_audio, encoded_prompt))
+    dataset = TestSampleDataset(samples)
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,

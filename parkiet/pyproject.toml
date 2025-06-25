@@ -17,6 +17,16 @@ dependencies = [
     "pyannote.audio>=3.1.1",
     "pyarrow>=20.0.0",
     "python-ulid>=3.0.0",
+    "jax>=0.5.3",
+    "flax>=0.10.6",
+]
+
+[project.optional-dependencies]
+cuda = [
+  "jax[cuda12]>=0.5.3",
+]
+tpu = [
+  "jax[tpu]>=0.5.3",
 ]
 
 [build-system]
@@ -41,6 +51,7 @@ torchaudio = [
 
 [tool.uv]
 dev-dependencies = [
+    "pytest>=8.4.1",
     "ruff>=0.11.12",
 ]
 # Install latest to support Blackwell chipset
