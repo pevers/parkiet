@@ -46,4 +46,5 @@ def convert_torch_to_flax(torch_model, flax_model_params):
         if not found:
             raise ValueError(f"Weight {k} not found in PyTorch state")
     new_params = unflatten_dict(new_flat)
+    print("Flax params loaded from torch:", new_params.keys())
     return freeze(new_params)

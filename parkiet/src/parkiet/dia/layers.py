@@ -612,7 +612,8 @@ class EncoderLayer(nn.Module):
             X=x_norm,
             q_positions=state.positions,
             kv_positions=state.positions,
-            attn_mask=state.attn_mask,
+            # We don't pass a mask in the encoder, it will lead to numerical issues and is slower
+            attn_mask=None,
         )
         x = residual + sa_out
 
@@ -645,7 +646,7 @@ class Encoder(nn.Module):
         self.norm = RMSNorm(
             enc_config.n_embd,
             eps=model_config.normalization_layer_epsilon,
-            dtype=torch.float32,
+            dtype=torch.float32
         )
 
     def forward(
@@ -655,7 +656,7 @@ class Encoder(nn.Module):
     ) -> torch.Tensor:
         x = self.embedding(x_ids)
 
-        for layer in self.layers:
+        for layer in self.layers[0:1]:
             x = layer(x, state)
 
         x = self.norm(x).to(self.compute_dtype)

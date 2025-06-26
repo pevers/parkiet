@@ -20,7 +20,7 @@ class MlpBlock(nn.Module):
         wi_fused = nn.DenseGeneral(
             features=(2, self.intermediate_dim),
             axis=(-1,),
-            dtype=self.compute_dtype,
+            param_dtype=self.compute_dtype,
             name="wi_fused",
             use_bias=False,
         )(x)
@@ -34,7 +34,7 @@ class MlpBlock(nn.Module):
         output = nn.DenseGeneral(
             features=(self.embed_dim,),
             axis=(-1,),
-            dtype=self.compute_dtype,
+            param_dtype=self.compute_dtype,
             name="wo",
             use_bias=False,
         )(hidden)
@@ -128,25 +128,33 @@ class CrossAttention(nn.Module):
             features=(self.num_query_heads, self.head_dim),
             axis=(-1,),
             dtype=self.compute_dtype,
+            param_dtype=self.compute_dtype,
             name="q_proj",
+            use_bias=False,
         )
         self.k_proj = nn.DenseGeneral(
             features=(self.num_kv_heads, self.head_dim),
             axis=(-1,),
             dtype=self.compute_dtype,
+            param_dtype=self.compute_dtype,
             name="k_proj",
+            use_bias=False,
         )
         self.v_proj = nn.DenseGeneral(
             features=(self.num_kv_heads, self.head_dim),
             axis=(-1,),
             dtype=self.compute_dtype,
+            param_dtype=self.compute_dtype,
             name="v_proj",
+            use_bias=False,
         )
         self.o_proj = nn.DenseGeneral(
             features=(self.output_dim,),
             axis=(-2, -1),
             dtype=self.compute_dtype,
+            param_dtype=self.compute_dtype,
             name="o_proj",
+            use_bias=False,
         )
 
         # Rotary embedding
@@ -185,7 +193,7 @@ class CrossAttention(nn.Module):
             value=attn_v,
             mask=attn_mask if is_causal else None,
             scale=1.0,
-            is_causal=is_causal,
+            is_causal=is_causal
         )
 
         attn_output = jnp.swapaxes(attn_output, 1, 2)  # (B, T, N, H)
@@ -223,6 +231,7 @@ class SelfAttention(nn.Module):
             features=(self.num_query_heads, self.head_dim),
             axis=(-1,),
             dtype=self.compute_dtype,
+            param_dtype=self.compute_dtype,
             name="q_proj",
             use_bias=False,
         )
@@ -230,6 +239,7 @@ class SelfAttention(nn.Module):
             features=(self.num_kv_heads, self.head_dim),
             axis=(-1,),
             dtype=self.compute_dtype,
+            param_dtype=self.compute_dtype,
             name="k_proj",
             use_bias=False,
         )
@@ -237,6 +247,7 @@ class SelfAttention(nn.Module):
             features=(self.num_kv_heads, self.head_dim),
             axis=(-1,),
             dtype=self.compute_dtype,
+            param_dtype=self.compute_dtype,
             name="v_proj",
             use_bias=False,
         )
@@ -244,6 +255,7 @@ class SelfAttention(nn.Module):
             features=(self.output_dim,),
             axis=(-2, -1),
             dtype=self.compute_dtype,
+            param_dtype=self.compute_dtype,
             name="o_proj",
             use_bias=False,
         )
@@ -353,8 +365,10 @@ class EncoderLayer(nn.Module):
             X=x_norm,
             q_positions=state.positions,
             kv_positions=state.positions,
-            attn_mask=state.attn_mask,
+            # We don't pass a mask in the encoder, it will lead to numerical issues and is slower
+            attn_mask=None,
         )
+
         x = residual + sa_out
 
         residual = x
@@ -378,8 +392,7 @@ class Encoder(nn.Module):
         self.embedding = nn.Embed(
             num_embeddings=model_config.src_vocab_size,
             features=enc_config.n_embd,
-            dtype=self.compute_dtype,
-            name="embedding",
+            dtype=self.compute_dtype
         )
         self.layers = [
             EncoderLayer(
@@ -390,13 +403,13 @@ class Encoder(nn.Module):
         self.norm = nn.RMSNorm(
             epsilon=model_config.normalization_layer_epsilon,
             dtype=jnp.float32,
-            name="norm",
+            param_dtype=jnp.float32
         )
 
     def __call__(self, x_ids: jnp.ndarray, state: EncoderInferenceState) -> jnp.ndarray:
         x = self.embedding(x_ids)
 
-        for layer in self.layers:
+        for layer in self.layers[0:1]:
             x = layer(x, state)
 
         x = self.norm(x).astype(self.compute_dtype)
@@ -535,13 +548,13 @@ class Decoder(nn.Module):
                 num_embeddings=model_config.tgt_vocab_size,
                 features=dec_config.n_embd,
                 dtype=self.compute_dtype,
-                name=f"embedding_{i}",
+                name=f"embedding.{i}",
             )
             for i in range(self.num_channels)
         ]
         self.layers = [
             DecoderLayer(
-                config=self.config, compute_dtype=self.compute_dtype, name=f"layer_{i}"
+                config=self.config, compute_dtype=self.compute_dtype, name=f"layer.{i}"
             )
             for i in range(self.num_layers)
         ]
