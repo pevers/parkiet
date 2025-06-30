@@ -14,7 +14,7 @@ uv sync --extra cuda
 Download the weights:
 
 ```bash
-wget https://huggingface.co/nari-labs/Dia-1.6B/resolve/main/dia-v0_1.pth?download=true -O weights/dia-v0_1.pth
+wget https://huggingface.co/nari-labs/Dia-1.6B-0626/resolve/main/dia-v1.pth?download=true -O weights/dia-v1.pth
 ```
 
 ## Prerequisites

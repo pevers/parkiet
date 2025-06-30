@@ -25,13 +25,13 @@ class EncoderTrainingState:
         positions = torch.arange(
             config.data.text_length, dtype=torch.float32, device=device
         ).unsqueeze(0)
-        padding_mask = (cond_src.squeeze(1) != config.data.text_pad_value).to(device)
+        padding_mask = (cond_src.squeeze(1) != 0).to(device)
         attn_mask = create_attn_mask(
             padding_mask, padding_mask, device, is_causal=False
         )
 
         return cls(
-            max_seq_len=config.data.text_length,
+            max_seq_len=config.encoder_config.max_position_embeddings,
             device=device,
             positions=positions,
             padding_mask=padding_mask,

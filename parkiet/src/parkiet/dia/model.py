@@ -1,11 +1,12 @@
 import time
 from enum import Enum
+from typing import Callable
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torchaudio
 
-# Assuming these imports are relative to the package structure
 from .audio import (
     apply_audio_delay,
     build_delay_indices,
@@ -47,6 +48,10 @@ def _sample_next_token(
         mask_eos_unless_highest_BCxV = torch.zeros_like(logits_BCxV, dtype=torch.bool)
         mask_eos_unless_highest_BCxV[eos_not_highest_mask_BC, audio_eos_value] = True
         logits_BCxV = logits_BCxV.masked_fill(mask_eos_unless_highest_BCxV, -torch.inf)
+        eos_highest_mask_BC = top_logit_indices_BC == audio_eos_value
+        mask_eos_highest_BCxV = torch.zeros_like(logits_BCxV, dtype=torch.bool)
+        mask_eos_highest_BCxV[eos_highest_mask_BC, :audio_eos_value] = True
+        logits_BCxV = logits_BCxV.masked_fill(mask_eos_highest_BCxV, -torch.inf)
 
     if top_k is not None:
         _, top_k_indices_BCxV = torch.topk(logits_BCxV, k=top_k, dim=-1)
@@ -184,7 +189,7 @@ class Dia:
     @classmethod
     def from_pretrained(
         cls,
-        model_name: str = "nari-labs/Dia-1.6B",
+        model_name: str = "nari-labs/Dia-1.6B-0626",
         compute_dtype: str | ComputeDtype = ComputeDtype.FLOAT32,
         device: torch.device | None = None,
         load_dac: bool = True,
@@ -195,7 +200,7 @@ class Dia:
         repository ID and then loads the model.
 
         Args:
-            model_name: The Hugging Face Hub repository ID (e.g., "nari-labs/Dia-1.6B").
+            model_name: The Hugging Face Hub repository ID (e.g., "nari-labs/Dia-1.6B-0626").
             compute_dtype: The computation dtype to use.
             device: The device to load the model onto. If None, will automatically select the best available device.
             load_dac: Whether to load the DAC model.
@@ -261,7 +266,7 @@ class Dia:
         Returns:
             A tensor containing the encoded byte token IDs.
         """
-        max_len = self.config.data.text_length
+        max_len = self.config.encoder_config.max_position_embeddings
 
         byte_text = text.encode("utf-8")
         # Replace special tokens with their byte values if needed by the specific tokenizer/config
@@ -276,8 +281,8 @@ class Dia:
 
     def _pad_text_input(self, text_tokens: list[torch.Tensor]) -> torch.Tensor:
         """Pads the text input to the maximum length."""
-        text_pad_value = self.config.data.text_pad_value
-        max_len = self.config.data.text_length
+        text_pad_value = 0
+        max_len = self.config.encoder_config.max_position_embeddings
         batch_size = len(text_tokens)
 
         src_tokens = torch.full(
@@ -311,9 +316,9 @@ class Dia:
                 - prefill_steps (list[int]): A list containing the number of valid
                   tokens (including BOS) for each prompt in the batch.
         """
-        num_channels = self.config.data.channels
-        audio_bos_value = self.config.data.audio_bos_value
-        delay_pattern = self.config.data.delay_pattern
+        num_channels = self.config.decoder_config.num_channels
+        audio_bos_value = self.config.bos_token_id
+        delay_pattern = self.config.delay_pattern
         max_delay_pattern = max(delay_pattern)
         batch_size = len(audio_prompts)
 
@@ -362,6 +367,7 @@ class Dia:
         text: torch.Tensor,
         audio_prompts: list[torch.Tensor | None],
         max_tokens: int | None = None,
+        attn_fn: Callable = F.scaled_dot_product_attention,
     ):
         """Initializes the model state for generation.
 
@@ -391,7 +397,7 @@ class Dia:
         encoder_out = self.model.encoder(enc_input, enc_state)
 
         dec_cross_attn_cache = self.model.decoder.precompute_cross_attn_cache(
-            encoder_out, enc_state.positions, enc_state.padding_mask
+            encoder_out
         )
         dec_state = DecoderInferenceState.new(
             self.config,
@@ -445,11 +451,11 @@ class Dia:
 
         Returns:
             torch.Tensor: The sampled next tokens for each item in the batch,
-                        shape [B, C].
+                          shape [B, C].
         """
         B = tokens_Bx1xC.shape[0] // 2
 
-        audio_eos_value = self.config.data.audio_eos_value
+        audio_eos_value = self.config.eos_token_id
         logits_Bx1xCxV = self.model.decoder.decode_step(
             tokens_Bx1xC, dec_state, current_idx
         )
@@ -465,6 +471,11 @@ class Dia:
             cond_logits_BxCxV - uncond_logits_BxCxV
         )
 
+        _, top_k_indices_BxCxk = torch.topk(logits_BxCxV, k=top_k, dim=-1)
+        mask_BxCxV = torch.ones_like(logits_BxCxV, dtype=torch.bool)
+        mask_BxCxV = mask_BxCxV.scatter(dim=-1, index=top_k_indices_BxCxk, value=False)
+        logits_BxCxV = cond_logits_BxCxV.masked_fill(mask_BxCxV, -torch.inf)
+
         logits_BxCxV[:, :, audio_eos_value + 1 :] = torch.full_like(
             logits_BxCxV[:, :, audio_eos_value + 1 :],
             fill_value=-torch.inf,
@@ -473,9 +484,10 @@ class Dia:
             logits_BxCxV[:, 1:, audio_eos_value:],
             fill_value=-torch.inf,
         )
-        logits_BxCxV[:, 0, audio_eos_value] *= torch.tensor(0.8, device=self.device)
 
-        flat_logits_BCxV = logits_BxCxV.view(B * self.config.data.channels, -1)
+        flat_logits_BCxV = logits_BxCxV.view(
+            B * self.config.decoder_config.num_channels, -1
+        )
 
         pred_BC = _sample_next_token(
             flat_logits_BCxV.float(),
@@ -485,7 +497,7 @@ class Dia:
             audio_eos_value=audio_eos_value,
         )
 
-        pred_BxC = pred_BC.view(B, self.config.data.channels)
+        pred_BxC = pred_BC.view(B, self.config.decoder_config.num_channels)
         return pred_BxC
 
     def _generate_output(
@@ -509,11 +521,11 @@ class Dia:
             waveform for one item in the batch. If DAC is not loaded, returns the
             raw, reverted codebook indices as NumPy arrays.
         """
-        num_channels = self.config.data.channels
+        num_channels = self.config.decoder_config.num_channels
         batch_size = generated_codes.shape[0]
         seq_length = generated_codes.shape[1]
-        delay_pattern = self.config.data.delay_pattern
-        audio_pad_value = self.config.data.audio_pad_value
+        delay_pattern = self.config.delay_pattern
+        audio_pad_value = self.config.pad_token_id
         max_delay_pattern = max(delay_pattern)
 
         revert_precomp = build_revert_indices(
@@ -622,7 +634,7 @@ class Dia:
     def generate(
         self,
         text: str | list[str],
-        max_tokens: int | None = None,
+        max_tokens: int = 3072,
         cfg_scale: float = 3.0,
         temperature: float = 1.2,
         top_p: float = 0.95,
@@ -671,10 +683,9 @@ class Dia:
             sequence if no audio was generated for it.
         """
         batch_size = len(text) if isinstance(text, list) else 1
-        audio_eos_value = self.config.data.audio_eos_value
-        audio_pad_value = self.config.data.audio_pad_value
-        delay_pattern = self.config.data.delay_pattern
-        max_tokens = self.config.data.audio_length if max_tokens is None else max_tokens
+        audio_eos_value = self.config.eos_token_id
+        audio_pad_value = self.config.pad_token_id
+        delay_pattern = self.config.delay_pattern
         max_delay_pattern = max(delay_pattern)
         delay_pattern_Cx = torch.tensor(
             delay_pattern, device=self.device, dtype=torch.long
@@ -833,8 +844,8 @@ class Dia:
         outputs = []
 
         if max_len > 0:
-            num_channels = self.config.data.channels
-            audio_pad_value = self.config.data.audio_pad_value
+            num_channels = self.config.decoder_config.num_channels
+            audio_pad_value = self.config.pad_token_id
             generated_codes = torch.full(
                 (batch_size, max_len, num_channels),
                 fill_value=audio_pad_value,

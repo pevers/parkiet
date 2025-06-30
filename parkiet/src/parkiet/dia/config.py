@@ -14,161 +14,132 @@ Key components:
 """
 
 import os
-from typing import Annotated
 
-from pydantic import BaseModel, BeforeValidator, Field
-
-
-class DataConfig(BaseModel):
-    """Configuration for data loading and preprocessing.
-
-    Attributes:
-        text_length: Maximum length of text sequences (must be multiple of 128).
-        audio_length: Maximum length of audio sequences (must be multiple of 128).
-        channels: Number of audio channels.
-        text_pad_value: Value used for padding text sequences.
-        audio_eos_value: Value representing the end of audio sequences.
-        audio_bos_value: Value representing the beginning of audio sequences.
-        audio_pad_value: Value used for padding audio sequences.
-        delay_pattern: List of delay values for each audio channel.
-    """
-
-    text_length: Annotated[int, BeforeValidator(lambda x: (x + 127) // 128 * 128)] = (
-        Field(gt=0, multiple_of=128)
-    )
-    audio_length: Annotated[int, BeforeValidator(lambda x: (x + 127) // 128 * 128)] = (
-        Field(gt=0, multiple_of=128)
-    )
-    channels: int = Field(default=9, gt=0, multiple_of=1)
-    text_pad_value: int = Field(default=0)
-    audio_eos_value: int = Field(default=1024)
-    audio_pad_value: int = Field(default=1025)
-    audio_bos_value: int = Field(default=1026)
-    delay_pattern: list[Annotated[int, Field(ge=0)]] = Field(
-        default_factory=lambda: [0, 8, 9, 10, 11, 12, 13, 14, 15]
-    )
-
-    def __hash__(self) -> int:
-        """Generate a hash based on all fields of the config."""
-        return hash(
-            (
-                self.text_length,
-                self.audio_length,
-                self.channels,
-                self.text_pad_value,
-                self.audio_pad_value,
-                self.audio_bos_value,
-                self.audio_eos_value,
-                tuple(self.delay_pattern),
-            )
-        )
+from pydantic import BaseModel, Field
 
 
 class EncoderConfig(BaseModel, frozen=True):
     """Configuration for the encoder component of the Dia model.
 
     Attributes:
-        n_layer: Number of transformer layers.
-        n_embd: Embedding dimension.
-        n_hidden: Hidden dimension size in the MLP layers.
-        n_head: Number of attention heads.
-        head_dim: Dimension per attention head.
+        model_type: Type of the model, defaults to "dia_encoder".
+        hidden_size: Size of the encoder layers, defaults to 1024.
+        intermediate_size: Size of the "intermediate" (i.e., feed-forward) layer in the encoder, defaults to 4096.
+        num_hidden_layers: Number of hidden layers in the encoder, defaults to 12.
+        num_attention_heads: Number of attention heads in the encoder, defaults to 16.
+        num_key_value_heads: Number of key-value heads in the encoder, defaults to 16.
+        head_dim: Dimension of each attention head, defaults to 128.
+        hidden_act: Activation function in the encoder, defaults to "silu".
+        max_position_embeddings: Maximum number of position embeddings, defaults to 1024.
+        initializer_range: Range for initializing weights, defaults to 0.02.
+        norm_eps: Epsilon value for normalization layers, defaults to 1e-5.
+        rope_theta: Theta value for RoPE, defaults to 10000.0.
+        rope_scaling: Optional scaling factor for RoPE.
+        vocab_size: Vocabulary size, defaults to 256.
     """
 
-    n_layer: int = Field(gt=0)
-    n_embd: int = Field(gt=0)
-    n_hidden: int = Field(gt=0)
-    n_head: int = Field(gt=0)
-    head_dim: int = Field(gt=0)
+    head_dim: int = Field(default=128, gt=0)
+    hidden_act: str = Field(default="silu")
+    hidden_size: int = Field(default=1024, gt=0)
+    initializer_range: float = Field(default=0.02)
+    intermediate_size: int = Field(default=4096, gt=0)
+    max_position_embeddings: int = Field(default=1024, gt=0)
+    model_type: str = Field(default="dia_encoder")
+    norm_eps: float = Field(default=1e-5)
+    num_attention_heads: int = Field(default=16, gt=0)
+    num_hidden_layers: int = Field(default=12, gt=0)
+    num_key_value_heads: int = Field(default=16, gt=0)
+    rope_scaling: float | None = Field(default=None)
+    rope_theta: float = Field(default=10000.0)
+    vocab_size: int = Field(default=256, gt=0)
 
 
-class DecoderConfig(BaseModel):
+class DecoderConfig(BaseModel, frozen=True):
     """Configuration for the decoder component of the Dia model.
 
     Attributes:
-        n_layer: Number of transformer layers.
-        n_embd: Embedding dimension.
-        n_hidden: Hidden dimension size in the MLP layers.
-        gqa_query_heads: Number of query heads for grouped-query self-attention.
-        kv_heads: Number of key/value heads for grouped-query self-attention.
-        gqa_head_dim: Dimension per query head for grouped-query self-attention.
-        cross_query_heads: Number of query heads for cross-attention.
-        cross_head_dim: Dimension per cross-attention head.
+        model_type: Type of the model, defaults to "dia_decoder".
+        hidden_size: Size of the decoder layers, defaults to 2048.
+        intermediate_size: Size of the "intermediate" (i.e., feed-forward) layer in the decoder, defaults to 8192.
+        num_hidden_layers: Number of hidden layers in the decoder, defaults to 18.
+        num_attention_heads: Number of attention heads in the decoder, defaults to 16.
+        num_key_value_heads: Number of key-value heads in the decoder, defaults to 4.
+        head_dim: Dimension of each attention head, defaults to 128.
+        cross_hidden_size: Size of the cross-attention layers, defaults to 1024.
+        cross_num_attention_heads: Number of attention heads in the cross-attention mechanism, defaults to 16.
+        cross_num_key_value_heads: Number of key-value heads in the cross-attention mechanism, defaults to 16.
+        cross_head_dim: Dimension of each cross-attention head, defaults to 128.
+        hidden_act: Activation function in the decoder, defaults to "silu".
+        max_position_embeddings: Maximum number of position embeddings in the decoder, defaults to 3072.
+        initializer_range: Range for initializing weights in the decoder, defaults to 0.02.
+        norm_eps: Epsilon value for normalization layers in the decoder, defaults to 1e-5.
+        rope_theta: Theta value for RoPE in the decoder, defaults to 10000.0.
+        rope_scaling: Optional scaling factor for RoPE in the decoder.
+        vocab_size: Vocabulary size for the decoder, defaults to 1028.
+        num_channels: Number of channels in the decoder, defaults to 9.
     """
 
-    n_layer: int = Field(gt=0)
-    n_embd: int = Field(gt=0)
-    n_hidden: int = Field(gt=0)
-    gqa_query_heads: int = Field(gt=0)
-    kv_heads: int = Field(gt=0)
-    gqa_head_dim: int = Field(gt=0)
-    cross_query_heads: int = Field(gt=0)
-    cross_head_dim: int = Field(gt=0)
+    cross_head_dim: int = Field(default=128, gt=0)
+    cross_hidden_size: int = Field(default=1024, gt=0)
+    cross_num_attention_heads: int = Field(default=16, gt=0)
+    cross_num_key_value_heads: int = Field(default=16, gt=0)
+    head_dim: int = Field(default=128, gt=0)
+    hidden_act: str = Field(default="silu")
+    hidden_size: int = Field(default=2048, gt=0)
+    initializer_range: float = Field(default=0.02)
+    intermediate_size: int = Field(default=8192, gt=0)
+    max_position_embeddings: int = Field(default=3072, gt=0)
+    model_type: str = Field(default="dia_decoder")
+    norm_eps: float = Field(default=1e-5)
+    num_attention_heads: int = Field(default=16, gt=0)
+    num_channels: int = Field(default=9, gt=0)
+    num_hidden_layers: int = Field(default=18, gt=0)
+    num_key_value_heads: int = Field(default=4, gt=0)
+    rope_scaling: float | None = Field(default=None)
+    rope_theta: float = Field(default=10000.0)
+    vocab_size: int = Field(default=1028, gt=0)
 
 
-class ModelConfig(BaseModel):
+class DiaConfig(BaseModel, frozen=True):
     """Main configuration container for the Dia model architecture.
 
     Attributes:
+        model_type: Type of the model, defaults to "dia".
+        is_encoder_decoder: Flag indicating if the model is an encoder-decoder type, defaults to True.
         encoder: Configuration for the encoder component.
         decoder: Configuration for the decoder component.
         src_vocab_size: Size of the source (text) vocabulary.
         tgt_vocab_size: Size of the target (audio code) vocabulary.
-        dropout: Dropout probability applied within the model.
-        normalization_layer_epsilon: Epsilon value for normalization layers (e.g., LayerNorm).
-        weight_dtype: Data type for model weights (e.g., "float32", "bfloat16").
-        rope_min_timescale: Minimum timescale for Rotary Positional Embeddings (RoPE).
-        rope_max_timescale: Maximum timescale for Rotary Positional Embeddings (RoPE).
+        initializer_range: Range for initializing weights, defaults to 0.02.
+        norm_eps: Epsilon value for normalization layers, defaults to 1e-5.
+        torch_dtype: Data type for model weights in PyTorch, defaults to "float32".
+        bos_token_id: Beginning-of-sequence token ID, defaults to 1026.
+        eos_token_id: End-of-sequence token ID, defaults to 1024.
+        pad_token_id: Padding token ID, defaults to 1025.
+        rope_theta: Theta value for RoPE, defaults to 10000.0.
+        rope_scaling: Optional scaling factor for RoPE.
+        transformers_version: Version of the transformers library, defaults to "4.53.0.dev0".
+        architectures: List of model architectures, defaults to ["DiaForConditionalGeneration"].
+        delay_pattern: List of delay values for each audio channel, defaults to [0,8,9,10,11,12,13,14,15].
     """
 
-    encoder: EncoderConfig
-    decoder: DecoderConfig
-    src_vocab_size: int = Field(default=128, gt=0)
-    tgt_vocab_size: int = Field(default=1028, gt=0)
-    dropout: float = Field(default=0.0, ge=0.0, lt=1.0)
-    normalization_layer_epsilon: float = Field(default=1.0e-5, ge=0.0)
-    weight_dtype: str = Field(default="float32", description="Weight precision")
-    rope_min_timescale: int = Field(
-        default=1, description="Timescale For global Attention"
+    architectures: list[str] = Field(
+        default_factory=lambda: ["DiaForConditionalGeneration"]
     )
-    rope_max_timescale: int = Field(
-        default=10_000, description="Timescale For global Attention"
+    bos_token_id: int = Field(default=1026)
+    decoder_config: DecoderConfig
+    delay_pattern: list[int] = Field(
+        default_factory=lambda: [0, 8, 9, 10, 11, 12, 13, 14, 15]
     )
-
-
-class TrainingConfig(BaseModel):
-    """Configuration for the training process.
-
-    Attributes:
-        batch_size: Batch size for training.
-        learning_rate: Learning rate for training.
-        weight_decay: Weight decay for training.
-    """
-
-    batch_size: int = Field(default=1, gt=0)
-    learning_rate: float = Field(default=1.0e-4, ge=0.0)
-    num_workers: int = Field(default=8, ge=0)
-    eval_steps: int = Field(default=100, ge=0)
-    save_steps: int = Field(default=100, ge=0)
-
-
-class DiaConfig(BaseModel):
-    """Master configuration for the Dia model.
-
-    Combines all sub-configurations into a single validated object.
-
-    Attributes:
-        version: Configuration version string.
-        model: Model architecture configuration.
-        training: Training process configuration (precision settings).
-        data: Data loading and processing configuration.
-    """
-
-    version: str = Field(default="1.0")
-    model: ModelConfig
-    # TODO: remove training. this is just for backward compatibility
-    training: TrainingConfig | None = Field(default=None)
-    data: DataConfig
+    encoder_config: EncoderConfig
+    eos_token_id: int = Field(default=1024)
+    initializer_range: float = Field(default=0.02)
+    is_encoder_decoder: bool = Field(default=True)
+    model_type: str = Field(default="dia")
+    norm_eps: float = Field(default=1e-5)
+    pad_token_id: int = Field(default=1025)
+    torch_dtype: str = Field(default="float32")
+    transformers_version: str = Field(default="4.53.0.dev0")
 
     def save(self, path: str) -> None:
         """Save the current configuration instance to a JSON file.

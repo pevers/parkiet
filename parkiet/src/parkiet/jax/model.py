@@ -1,7 +1,12 @@
 import jax.numpy as jnp
-from flax.core import freeze, unfreeze
 from flax.traverse_util import flatten_dict, unflatten_dict
+import flax.nnx as nnx
+from flax.nnx.statelib import replace_by_pure_dict
+import logging
+
 from parkiet.dia.config import DiaConfig
+
+log = logging.getLogger(__name__)
 
 
 def torch_to_flax_weight(torch_tensor):
@@ -9,23 +14,22 @@ def torch_to_flax_weight(torch_tensor):
     return jnp.array(torch_tensor.cpu().numpy())
 
 
-def convert_torch_to_flax(torch_model, flax_model_params):
+def convert_torch_to_nnx(torch_model, nnx_model, dia_config: DiaConfig):
     """
-    Map PyTorch model weights to Flax model weights.
-    This function assumes the architectures are identical and key names are similar.
+    Map PyTorch model weights to nnx model weights.
     """
     torch_state = torch_model.state_dict()
-    flax_params = unfreeze(flax_model_params)
-    flat_flax = flatten_dict(flax_params)
+    graphdef, state = nnx.split(nnx_model)
+    state_dict = nnx.to_pure_dict(state)
+    state_dict = flatten_dict(state_dict)
     new_flat = {}
-    for k, v in flat_flax.items():
-        # Build the corresponding torch key
-
-        # TODO: This is too aggresive! You are clearly doing something wrong in the model
-        torch_key = ".".join(k)
+    for k, v in state_dict.items():
+        torch_key = ".".join([str(s) for s in k])
         torch_key = torch_key.replace("embedding.embedding", "embedding.weight")
         torch_key = torch_key.replace("pre_sa_norm.scale", "pre_sa_norm.weight")
         torch_key = torch_key.replace("post_sa_norm.scale", "post_sa_norm.weight")
+        torch_key = torch_key.replace("pre_ca_norm.scale", "pre_ca_norm.weight")
+        torch_key = torch_key.replace("pre_mlp_norm.scale", "pre_mlp_norm.weight")
         torch_key = torch_key.replace("q_proj.kernel", "q_proj.weight")
         torch_key = torch_key.replace("k_proj.kernel", "k_proj.weight")
         torch_key = torch_key.replace("v_proj.kernel", "v_proj.weight")
@@ -34,17 +38,25 @@ def convert_torch_to_flax(torch_model, flax_model_params):
         torch_key = torch_key.replace("wi_fused.kernel", "wi_fused.weight")
         torch_key = torch_key.replace("wo.kernel", "wo.weight")
         torch_key = torch_key.replace("norm.scale", "norm.weight")
+        torch_key = torch_key.replace("logits_dense.kernel", "logits_dense.weight")
 
-        # Try to find the corresponding torch key
+        # There is probably a better/faster way but it works and it is easy to understand
+        for i in range(0, dia_config.decoder_config.num_channels):
+            torch_key = torch_key.replace(
+                f"embeddings.{i}.embedding", f"embeddings.{i}.weight"
+            )
+
         found = False
         for tk in torch_state:
-            if tk.endswith(torch_key):
+            if tk == torch_key:
                 arr = torch_state[tk]
                 new_flat[k] = torch_to_flax_weight(arr)
                 found = True
                 break
         if not found:
-            raise ValueError(f"Weight {k} not found in PyTorch state")
+            # TODO: Fix timescale variables, they should not be part of the state
+            log.warning(f"Weight {k} not found in PyTorch state")
+
     new_params = unflatten_dict(new_flat)
-    print("Flax params loaded from torch:", new_params.keys())
-    return freeze(new_params)
+    replace_by_pure_dict(state, new_params)
+    return nnx.merge(graphdef, state)
