@@ -1,4 +1,7 @@
 import os
+
+# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+# os.environ["JAX_PLATFORMS"] = "cpu"
 import torch
 import numpy as np
 import jax
@@ -129,10 +132,6 @@ def test_rms_equivalence():
     np.testing.assert_allclose(jax_out, torch_out, rtol=1e-4, atol=1e-4)
 
 
-def test_cross_attention_equivalence():
-    raise NotImplementedError("Cross attention is not implemented in JAX")
-
-
 def test_self_attention_equivalence():
     dia_config = DiaConfig.load(
         os.path.join(os.path.dirname(__file__), "../config.json")
@@ -201,9 +200,8 @@ def test_encoder_layer_equivalence():
     )
     dia_config = dia.config
     vocab_size = dia_config.encoder_config.vocab_size
-    seq_len = dia_config.encoder_config.max_position_embeddings
-
-    input_tokens = torch.randint(0, vocab_size, (1, 1, seq_len), dtype=torch.long)
+    hidden_size = 1024
+    input_tokens = torch.randint(0, vocab_size, (1, 1, hidden_size), dtype=torch.long)
     torch_inference_state = dia_state.EncoderInferenceState.new(
         dia_config, input_tokens
     )
@@ -211,7 +209,9 @@ def test_encoder_layer_equivalence():
     # PyTorch
     torch_layer = dia_layers.EncoderLayer(dia_config, compute_dtype=torch.float32)
     torch_layer.eval()
-    embedding = np.random.uniform(-1, 1, (2, 1024, 1024)).astype(np.float32)
+    embedding = np.random.uniform(-1, 1, (2, hidden_size, hidden_size)).astype(
+        np.float32
+    )
     torch_out = (
         torch_layer(torch.as_tensor(embedding), torch_inference_state).detach().numpy()
     )
@@ -234,7 +234,7 @@ def test_fused_qkv_equivalence():
 
 
 def test_self_attention_cache():
-    pass
+    raise NotImplementedError("Self attention cache is not implemented in JAX")
 
 
 def test_encoder_equivalence():

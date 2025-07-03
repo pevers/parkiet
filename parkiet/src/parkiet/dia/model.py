@@ -759,6 +759,8 @@ class Dia:
             start_time = time.time()
 
         # --- Generation Loop ---
+        # TEST
+        max_tokens = 1
         while dec_step < max_tokens:
             if (eos_countdown_Bx == 0).all():
                 break

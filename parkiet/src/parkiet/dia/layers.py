@@ -667,9 +667,7 @@ class DecoderLayer(nn.Module):
 
         # Norms
         self.pre_sa_norm = RMSNorm(
-            dec_embed_dim,
-            eps=dec_config.norm_eps,
-            dtype=torch.float32,
+            dec_embed_dim, eps=dec_config.norm_eps, dtype=torch.float32
         )
         self.pre_ca_norm = RMSNorm(
             dec_embed_dim,
@@ -722,9 +720,7 @@ class DecoderLayer(nn.Module):
     ) -> torch.Tensor:
         residual = x
         x_norm = self.pre_sa_norm(x).to(self.compute_dtype)
-
         self_attn_mask = state.casual_attn_mask[None, None, current_idx]
-
         sa_out = self.self_attention(
             X=x_norm,  # (2, 1, D)
             q_positions=state.dec_positions,  # (2, 1)
@@ -735,9 +731,7 @@ class DecoderLayer(nn.Module):
             is_causal=prefill,
             current_idx=current_idx,
         )
-
         x = residual + sa_out
-
         residual = x
         x_norm = self.pre_ca_norm(x).to(self.compute_dtype)
         # Cross attention is different for Decoder!
@@ -749,12 +743,10 @@ class DecoderLayer(nn.Module):
             cache=cross_attn_cache,
         )
         x = residual + ca_out
-
         residual = x
         x_norm = self.pre_mlp_norm(x).to(self.compute_dtype)
         mlp_out = self.mlp(x_norm)
         x = residual + mlp_out
-
         return x
 
 

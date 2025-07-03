@@ -19,6 +19,7 @@ dependencies = [
     "python-ulid>=3.0.0",
     "jax>=0.5.3",
     "flax>=0.10.6",
+    "orbax-export>=0.0.6",
 ]
 
 [project.optional-dependencies]
@@ -55,4 +56,7 @@ dev-dependencies = [
     "ruff>=0.11.12",
 ]
 # Install latest to support Blackwell chipset
-override-dependencies = ["torch>2.6", "torchaudio>2.6"]
+override-dependencies = [
+  "torch>2.6",
+  "torchaudio>2.6"
+]

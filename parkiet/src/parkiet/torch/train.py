@@ -201,7 +201,7 @@ def main():
     )
 
     # Initialize data loader
-    from parkiet.dataset import create_dataloader, create_test_dataloader
+    from parkiet.torch.dataset import create_dataloader, create_test_dataloader
 
     train_loader = create_dataloader(
         parquet_path="./data/chunks_dataset.parquet",

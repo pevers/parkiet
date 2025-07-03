@@ -5,9 +5,6 @@ from parkiet.dia.config import DecoderConfig, DiaConfig, EncoderConfig
 from parkiet.jax.state import DecoderInferenceState, EncoderInferenceState, KVCache
 from jax.nn import dot_product_attention
 
-import jax
-import jax.numpy as jnp
-
 
 class MlpBlock(nnx.Module):
     """MLP block using nnx.Linear"""
@@ -404,7 +401,7 @@ class SelfAttention(nnx.Module):
             query=Xq_BxTxNxH,
             key=attn_k,
             value=attn_v,
-            mask=attn_mask if is_causal else None,
+            mask=attn_mask if not is_causal else None,
             scale=1.0,
             is_causal=is_causal,
         )
@@ -552,18 +549,21 @@ class DecoderLayer(nnx.Module):
             num_features=dec_embed_dim,
             epsilon=dec_config.norm_eps,
             dtype=jnp.float32,
+            param_dtype=jnp.float32,
             rngs=rngs,
         )
         self.pre_ca_norm = nnx.RMSNorm(
             num_features=dec_embed_dim,
             epsilon=dec_config.norm_eps,
             dtype=jnp.float32,
+            param_dtype=jnp.float32,
             rngs=rngs,
         )
         self.pre_mlp_norm = nnx.RMSNorm(
             num_features=dec_embed_dim,
             epsilon=dec_config.norm_eps,
             dtype=jnp.float32,
+            param_dtype=jnp.float32,
             rngs=rngs,
         )
 
@@ -612,7 +612,6 @@ class DecoderLayer(nnx.Module):
         x_norm = self.pre_sa_norm(x).astype(self.compute_dtype)
 
         self_attn_mask = state.causal_attn_mask[None, None, current_idx]
-
         sa_out = self.self_attention(
             X=x_norm,
             q_positions=state.dec_positions,
@@ -623,7 +622,6 @@ class DecoderLayer(nnx.Module):
             is_causal=prefill,
             current_idx=current_idx,
         )
-
         x = residual + sa_out
         residual = x
         x_norm = self.pre_ca_norm(x).astype(self.compute_dtype)
@@ -635,7 +633,6 @@ class DecoderLayer(nnx.Module):
             cache=cross_attn_cache,
         )
         x = residual + ca_out
-
         residual = x
         x_norm = self.pre_mlp_norm(x).astype(self.compute_dtype)
         mlp_out = self.mlp(x_norm)
@@ -735,16 +732,14 @@ class Decoder(nnx.Module):
             x = layer(
                 x,
                 state,
-                self_attn_cache_k=self_cache.k.value,
-                self_attn_cache_v=self_cache.v.value,
-                cross_attn_cache_k=cross_cache.k.value,
-                cross_attn_cache_v=cross_cache.v.value,
+                self_attn_cache=self_cache,
+                cross_attn_cache=cross_cache,
                 current_idx=current_idx,
             )
 
-        x = self.norm(x).astype(self.compute_dtype)
+        x = self.norm(x)
         logits_Bx1xCxV = self.logits_dense(x)
-        return logits_Bx1xCxV.astype(jnp.float32)
+        return logits_Bx1xCxV
 
     def __call__(
         self, tgt_ids_BxTxC: jnp.ndarray, state: DecoderInferenceState

@@ -123,8 +123,8 @@ class KVCache(nnx.Module):
         v: jnp.ndarray,  # same shape
         current_idx: int,
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        self.k.value = self.k.value.at[:, current_idx, :, :].set(k)
-        self.v.value = self.v.value.at[:, current_idx, :, :].set(v)
+        self.k.value = self.k.value.at[:, current_idx, :, :].set(k.squeeze(1))
+        self.v.value = self.v.value.at[:, current_idx, :, :].set(v.squeeze(1))
         return self.k.value, self.v.value
 
     def prefill(self, k: jnp.ndarray, v: jnp.ndarray):
@@ -208,8 +208,8 @@ class DecoderOutput:
 
     @classmethod
     def new(cls, batch_size: int, config: DiaConfig) -> "DecoderOutput":
-        audio_len = config.data.audio_length
-        channels = config.data.channels
+        audio_len = config.decoder_config.max_position_embeddings
+        channels = config.decoder_config.num_channels
         tokens = jnp.full(
             (batch_size, audio_len, channels), fill_value=-1, dtype=jnp.int32
         )
