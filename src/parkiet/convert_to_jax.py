@@ -29,13 +29,13 @@ def main():
     )
     jax_model = convert_torch_to_nnx(torch_model, jax_model, dia_config=dia_config)
     _, state = nnx.split(jax_model)
-    pure_dict = nnx.to_pure_dict(state)
+    params = nnx.to_pure_dict(state)
 
     # Checkpoint using Orbax
     import orbax.checkpoint as ocp
 
-    with ocp.StandardCheckpointer() as ckptr:
-        ckptr.save(ORBAX_OUTPUT_PATH, pure_dict)
+    with ocp.PyTreeCheckpointer() as ckptr:
+        ckptr.save(ORBAX_OUTPUT_PATH, params)
 
 
 if __name__ == "__main__":

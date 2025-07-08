@@ -222,7 +222,7 @@ class Dia:
 
         try:
             # Use orbax to load checkpoint
-            with ocp.StandardCheckpointer() as checkpointer:
+            with ocp.PyTreeCheckpointer() as checkpointer:
                 restored_params = checkpointer.restore(checkpoint_path)
 
             # Update model parameters
