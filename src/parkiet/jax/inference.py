@@ -3,7 +3,9 @@ from pathlib import Path
 
 checkpoint_path = (Path("weights") / "jax-v1").resolve()
 model = Dia.from_local(
-    config_path="config.json", checkpoint_path=checkpoint_path.as_posix(), compute_dtype="float32"
+    config_path="config.json",
+    checkpoint_path=checkpoint_path.as_posix(),
+    compute_dtype="float32",
 )
 
 text = "[S1] Dia is an open weights text to dialogue model. [S2] You get full control over scripts and voices. [S1] Wow. Amazing. (laughs) [S2] Try it now on Git hub or Hugging Face."

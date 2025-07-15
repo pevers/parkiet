@@ -1,9 +1,9 @@
 from pydantic import BaseModel
 from dataclasses import dataclass
+import numpy as np
 
 
-@dataclass
-class SpeakerEvent:
+class SpeakerEvent(BaseModel):
     """Represents a speaker event from pyannote diarization."""
 
     start: float  # seconds
@@ -35,3 +35,4 @@ class ProcessedAudioFile(BaseModel):
     audio_duration_sec: float
     chunks: list[ProcessedAudioChunk]
     success: bool
+    processing_window: dict[str, float] = {"start": 0.0, "end": 0.0}

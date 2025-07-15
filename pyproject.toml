@@ -20,6 +20,10 @@ dependencies = [
     "jax>=0.5.3",
     "flax>=0.10.6",
     "orbax-export>=0.0.6",
+    "psycopg[binary]>=3.2.9",
+    "redis>=6.2.0",
+    "google-cloud-storage>=3.2.0",
+    "python-dotenv>=1.1.1",
 ]
 
 [project.optional-dependencies]
@@ -60,3 +64,6 @@ override-dependencies = [
   "torch>2.6",
   "torchaudio>2.6"
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
