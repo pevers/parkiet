@@ -2,7 +2,6 @@
 Dummy data loader for JAX training.
 """
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 from typing import Iterator

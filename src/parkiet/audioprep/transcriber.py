@@ -9,7 +9,9 @@ class Transcriber:
         self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
             checkpoint_path, low_cpu_mem_usage=True, use_safetensors=True
         )
+        # Explicitly set generation config to avoid warnings
         self.model.generation_config.suppress_tokens = []
+        self.model.generation_config.begin_suppress_tokens = [220, 50257]
         self.processor = AutoProcessor.from_pretrained(checkpoint_path)
         self.device = (
             device
@@ -37,7 +39,7 @@ class Transcriber:
 
 class WhisperTimestampedTranscriber:
     def __init__(
-        self, model_size: str = "openai/whisper-large-v3", device: str = "auto"
+        self, model_size: str = "openai/whisper-large-v3-turbo", device: str = "auto"
     ):
         self.model = whisper.load_model(model_size, device=device)
         self.device = device

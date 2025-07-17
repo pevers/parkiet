@@ -1,6 +1,4 @@
 from pydantic import BaseModel
-from dataclasses import dataclass
-import numpy as np
 
 
 class SpeakerEvent(BaseModel):

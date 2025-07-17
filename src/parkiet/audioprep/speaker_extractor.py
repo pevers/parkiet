@@ -1,11 +1,10 @@
 import os
-from pyannote.core import Segment
 import torch
 import numpy as np
 from pathlib import Path
 from pyannote.audio import Pipeline, Model
 from parkiet.audioprep.schemas import SpeakerEvent
-from pyannote.audio import Audio, Inference
+from pyannote.audio import Inference
 import logging
 
 ACCESS_TOKEN = os.getenv("HF_TOKEN")

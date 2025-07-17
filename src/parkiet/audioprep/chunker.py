@@ -74,7 +74,7 @@ class ChunkerWorker:
         self.speaker_extractor = SpeakerExtractor(device.type)
         self.transcriber = Transcriber(whisper_checkpoint_path, device)
         self.timestamped_transcriber = WhisperTimestampedTranscriber(
-            "openai/whisper-large-v3", device.type
+            "openai/whisper-large-v3-turbo", device.type
         )
 
     def download_from_gcs(self, gcs_path: str, local_path: Path) -> bool:

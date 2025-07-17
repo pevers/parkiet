@@ -3,7 +3,6 @@ JAX training loop implementation using flax nnx.
 """
 
 import logging
-import math
 import time
 from pathlib import Path
 import jax

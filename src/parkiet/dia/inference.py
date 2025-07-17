@@ -1,5 +1,4 @@
 from parkiet.dia.model import Dia
-from pathlib import Path
 
 model = Dia.from_local(
     config_path="config.json",
