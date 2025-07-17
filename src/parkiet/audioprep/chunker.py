@@ -74,7 +74,7 @@ class ChunkerWorker:
         self.speaker_extractor = SpeakerExtractor(device.type)
         self.transcriber = Transcriber(whisper_checkpoint_path, device)
         self.timestamped_transcriber = WhisperTimestampedTranscriber(
-            "openai/whisper-large-v3-turbo", device.type
+            "openai/whisper-large-v3", device.type
         )
 
     def download_from_gcs(self, gcs_path: str, local_path: Path) -> bool:
@@ -232,6 +232,7 @@ class ChunkerWorker:
                 speaker_events,
                 audio_file_path,
                 output_dir,
+                gcs_audio_path,
                 window_size_sec,
                 skip_start_sec,
                 skip_end_sec,
@@ -323,23 +324,15 @@ class ChunkerWorker:
         try:
             upload_success = True
 
-            # Create GCS path prefix based on original file path
-            original_file_path = Path(processed_file.source_file)
-            original_file_name = original_file_path.stem  # filename without extension
-            gcs_prefix = f"{original_file_name}/"
-
             for chunk in processed_file.chunks:
                 chunk_path = job_output_dir / chunk.audio_chunk.file_path
 
-                # Create GCS path with prefix
-                gcs_chunk_path = gcs_prefix + chunk.audio_chunk.file_path
+                # Use the GCS path already set in the chunk
+                gcs_chunk_path = chunk.audio_chunk.gcs_file_path
 
                 if chunk_path.exists():
                     success = self.gcs_client.upload_chunk(chunk_path, gcs_chunk_path)
-                    if success:
-                        # Set the GCS path for database storage
-                        chunk.audio_chunk.gcs_file_path = gcs_chunk_path
-                    else:
+                    if not success:
                         upload_success = False
                         log.error(f"Failed to upload chunk {gcs_chunk_path}")
                 else:
@@ -466,6 +459,7 @@ def create_chunks(
     speaker_events: list[SpeakerEvent],
     original_audio_path: Path,
     output_dir: Path,
+    gcs_audio_path: str,
     window_size_sec: float = 30.0,
     skip_start_sec: float = 100.0,
     skip_end_sec: float = 100.0,
@@ -480,6 +474,7 @@ def create_chunks(
         window_size_sec: Size of sliding window in seconds
         skip_start_sec: Time to skip from start (will find natural break after this)
         skip_end_sec: Time to skip from end (will find natural break before this)
+        gcs_audio_path: GCS path to the original audio file (used for chunk GCS paths)
 
     Returns:
         Tuple of (chunks, audio_duration, processing_window)
@@ -547,11 +542,17 @@ def create_chunks(
                 original_audio_path, chunk_start, chunk_end, chunk_path
             )
 
+            # Create GCS path for the chunk
+            original_file_path = Path(gcs_audio_path)
+            original_file_name = original_file_path.stem
+            gcs_chunk_path = f"{original_file_name}/{chunk_filename}"
+
             chunk = AudioChunk(
                 start=chunk_start * 1000,
                 end=chunk_end * 1000,
                 file_path=chunk_filename,
                 speaker_events=current_chunk_events,
+                gcs_file_path=gcs_chunk_path,
             )
 
             chunks.append(chunk)
@@ -586,11 +587,17 @@ def create_chunks(
 
         extract_audio_segment(original_audio_path, chunk_start, chunk_end, chunk_path)
 
+        # Create GCS path for the chunk
+        original_file_path = Path(gcs_audio_path)
+        original_file_name = original_file_path.stem
+        gcs_chunk_path = f"{original_file_name}/{chunk_filename}"
+
         chunk = AudioChunk(
             start=chunk_start * 1000,
             end=chunk_end * 1000,
             file_path=chunk_filename,
             speaker_events=current_chunk_events,
+            gcs_file_path=gcs_chunk_path,
         )
 
         chunks.append(chunk)

@@ -18,7 +18,7 @@ class AudioChunk(BaseModel):
     end: float  # milliseconds
     speaker_events: list[SpeakerEvent]
     file_path: str  # local file path to the chunk file
-    gcs_file_path: str | None = None  # GCS path to the chunk file
+    gcs_file_path: str  # GCS path to the chunk file
 
 
 class ProcessedAudioChunk(BaseModel):
