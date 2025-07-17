@@ -5,3 +5,6 @@ __pycache__/
 data/
 logs/
 .env
+bucket_mp3_files.txt
+test_files.txt
+part0.txt

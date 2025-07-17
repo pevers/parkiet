@@ -1,6 +1,7 @@
 from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
 import torch
 import librosa
+import whisper_timestamped as whisper
 
 
 class Transcriber:
@@ -32,3 +33,23 @@ class Transcriber:
             predicted_ids, skip_special_tokens=False
         )
         return transcription[0]
+
+
+class WhisperTimestampedTranscriber:
+    def __init__(
+        self, model_size: str = "openai/whisper-large-v3", device: str = "auto"
+    ):
+        self.model = whisper.load_model(model_size, device=device)
+        self.device = device
+
+    def transcribe(self, audio_path: str) -> str:
+        result = whisper.transcribe(
+            self.model, audio_path, language="nl", verbose=False
+        )
+        return result["text"]
+
+    def transcribe_with_timestamps(self, audio_path: str) -> dict:
+        result = whisper.transcribe(
+            self.model, audio_path, language="nl", verbose=False
+        )
+        return result

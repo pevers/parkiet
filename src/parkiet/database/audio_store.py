@@ -73,7 +73,7 @@ class AudioStore:
                 RETURNING id
             """,
                 (
-                    processed_file.source_file,
+                    processed_file.gcs_audio_path,
                     processed_file.audio_duration_sec,
                     processed_file.processing_window.get("start", 0.0),
                     processed_file.processing_window.get(
@@ -215,16 +215,17 @@ class AudioStore:
                 cursor.execute(
                     """
                     INSERT INTO audio_chunks 
-                    (audio_file_id, chunk_file_path, start_time_ms, end_time_ms, transcription)
-                    VALUES (%s, %s, %s, %s, %s)
+                    (audio_file_id, chunk_file_path, start_time_ms, end_time_ms, transcription, transcription_clean)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """,
                     (
                         audio_file_id,
-                        chunk.audio_chunk.file_path,
+                        chunk.audio_chunk.gcs_file_path or chunk.audio_chunk.file_path,
                         chunk.audio_chunk.start,
                         chunk.audio_chunk.end,
                         chunk.transcription,
+                        chunk.transcription_clean,
                     ),
                 )
 
@@ -238,8 +239,8 @@ class AudioStore:
         self,
         chunk_id: int,
         chunk_events: list[SpeakerEvent],
-        chunk_start_ms: int,
-        chunk_end_ms: int,
+        chunk_start_ms: float,
+        chunk_end_ms: float,
     ) -> list[int]:
         """
         Store links between chunks and events with timing information.

@@ -24,6 +24,7 @@ dependencies = [
     "redis>=6.2.0",
     "google-cloud-storage>=3.2.0",
     "python-dotenv>=1.1.1",
+    "whisper-timestamped>=1.15.8",
 ]
 
 [project.optional-dependencies]

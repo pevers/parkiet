@@ -4,9 +4,13 @@ from pathlib import Path
 import time
 import torch
 import shutil
+import warnings
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+warnings.filterwarnings(
+    "ignore", message="The MPEG_LAYER_III subtype is unknown to TorchAudio"
+)
+
 load_dotenv()
 from parkiet.audioprep.schemas import (
     AudioChunk,
@@ -17,11 +21,10 @@ from parkiet.audioprep.schemas import (
 from parkiet.utils.audio import (
     get_audio_duration,
     extract_audio_segment,
-    find_audio_files,
     find_natural_break_after_time,
 )
 from parkiet.audioprep.speaker_extractor import SpeakerExtractor
-from parkiet.audioprep.transcriber import Transcriber
+from parkiet.audioprep.transcriber import Transcriber, WhisperTimestampedTranscriber
 from parkiet.database.audio_store import AudioStore
 from parkiet.database.redis_connection import get_redis_connection
 from parkiet.storage.gcs_client import get_gcs_client
@@ -41,6 +44,7 @@ class ChunkerWorker:
         queue_name: str = "audio_processing",
         whisper_checkpoint_path: str = "pevers/whisperd-nl",
         temp_dir: str = "/tmp/parkiet_chunks",
+        gpu_id: int = 0,
     ):
         """
         Initialize the chunker worker.
@@ -49,6 +53,7 @@ class ChunkerWorker:
             queue_name: Redis queue name to listen to
             whisper_checkpoint_path: Path to Whisper checkpoint
             temp_dir: Temporary directory for processing chunks
+            gpu_id: GPU ID to use for processing (default: 0)
         """
         self.queue_name = queue_name
         self.temp_dir = Path(temp_dir)
@@ -60,33 +65,61 @@ class ChunkerWorker:
         self.audio_store = AudioStore()
 
         # Initialize AI models
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            device = torch.device(f"cuda:{gpu_id}")
+            torch.cuda.set_device(gpu_id)
+        else:
+            device = torch.device("cpu")
+
         self.speaker_extractor = SpeakerExtractor(device.type)
         self.transcriber = Transcriber(whisper_checkpoint_path, device)
+        self.timestamped_transcriber = WhisperTimestampedTranscriber(
+            "openai/whisper-large-v3-turbo", device.type
+        )
+
+    def download_from_gcs(self, gcs_path: str, local_path: Path) -> bool:
+        """
+        Download a file from GCS to local path.
+
+        Args:
+            gcs_path: GCS path to download from
+            local_path: Local path to download to
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            blob = self.gcs_client.bucket.blob(gcs_path)
+            blob.download_to_filename(str(local_path))
+            log.info(f"Downloaded {gcs_path} to {local_path}")
+            return True
+        except Exception as e:
+            log.error(f"Failed to download {gcs_path} from GCS: {e}")
+            return False
 
     def process_job(self, job_data: dict) -> bool:
         """
         Process a single job from the queue.
 
         Args:
-            job_data: Job data containing audio file path and processing parameters
+            job_data: Job data containing GCS audio file path and processing parameters
 
         Returns:
             True if successful, False otherwise
         """
         try:
             # Extract job parameters
-            audio_file_path = Path(job_data["audio_file_path"])
+            gcs_audio_path = job_data["audio_file_path"]
             window_size_sec = job_data.get("window_size_sec", 30.0)
             skip_start_sec = job_data.get("skip_start_sec", 120.0)
             skip_end_sec = job_data.get("skip_end_sec", 180.0)
 
-            log.info(f"Processing job: {audio_file_path}")
+            log.info(f"Processing job: {gcs_audio_path}")
 
             # Check if file has already been processed
-            if self.audio_store.is_audio_file_processed(str(audio_file_path)):
+            if self.audio_store.is_audio_file_processed(gcs_audio_path):
                 log.info(
-                    f"Audio file {audio_file_path} has already been processed, skipping"
+                    f"Audio file {gcs_audio_path} has already been processed, skipping"
                 )
                 return True
 
@@ -96,14 +129,26 @@ class ChunkerWorker:
             job_output_dir.mkdir(parents=True, exist_ok=True)
 
             try:
+                # Download from GCS to temporary location
+                gcs_filename = Path(gcs_audio_path).name
+                local_audio_path = job_output_dir / gcs_filename
+
+                if not self.download_from_gcs(gcs_audio_path, local_audio_path):
+                    log.error(f"Failed to download {gcs_audio_path} from GCS")
+                    return False
+
                 # Process the audio file
                 processed_file = self.process_single_audio_file(
-                    audio_file_path,
+                    local_audio_path,
                     job_output_dir,
+                    gcs_audio_path,
                     window_size_sec,
                     skip_start_sec,
                     skip_end_sec,
                 )
+
+                # Update the source file path to the original GCS path
+                processed_file.source_file = gcs_audio_path
 
                 if processed_file.success:
                     upload_success = self.upload_chunks_to_gcs(
@@ -112,19 +157,23 @@ class ChunkerWorker:
 
                     if upload_success:
                         log.info(
-                            f"Successfully processed and uploaded chunks for {audio_file_path}"
+                            f"Successfully processed and uploaded chunks for {gcs_audio_path}"
                         )
                         return True
                     else:
-                        log.error(f"Failed to upload chunks for {audio_file_path}")
+                        log.error(f"Failed to upload chunks for {gcs_audio_path}")
                         return False
                 else:
-                    log.error(f"Failed to process audio file {audio_file_path}")
+                    log.error(f"Failed to process audio file {gcs_audio_path}")
                     return False
 
             finally:
                 # Clean up temporary directory
                 self.cleanup_temp_dir(job_output_dir)
+
+                # Clear CUDA cache after each job to prevent memory accumulation
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
         except Exception as e:
             log.error(f"Error processing job: {e}")
@@ -134,6 +183,7 @@ class ChunkerWorker:
         self,
         audio_file_path: Path,
         output_dir: Path,
+        gcs_audio_path: str,
         window_size_sec: float = 30.0,
         skip_start_sec: float = 120.0,
         skip_end_sec: float = 180.0,
@@ -144,6 +194,7 @@ class ChunkerWorker:
         Args:
             audio_file_path: Path to the audio file
             output_dir: Output directory for chunks
+            gcs_audio_path: GCS path to the audio file
             window_size_sec: Size of sliding window in seconds
             skip_start_sec: Time to skip from start
             skip_end_sec: Time to skip from end
@@ -169,6 +220,7 @@ class ChunkerWorker:
                 return ProcessedAudioFile(
                     source_file=audio_file_path.as_posix(),
                     output_directory=output_dir.as_posix(),
+                    gcs_audio_path=gcs_audio_path,
                     audio_duration_sec=get_audio_duration(audio_file_path),
                     chunks=[],
                     processing_window={"start": 0.0, "end": 0.0},
@@ -190,19 +242,35 @@ class ChunkerWorker:
             for _, chunk in enumerate(chunks):
                 chunk_full_path = output_dir / chunk.file_path
                 transcription = self.transcriber.transcribe(chunk_full_path.as_posix())
+
+                # Get timestamped transcription with speaker tags
+                timestamped_result = (
+                    self.timestamped_transcriber.transcribe_with_timestamps(
+                        chunk_full_path.as_posix()
+                    )
+                )
+                # Convert chunk.start from milliseconds to seconds for timing alignment
+                chunk_start_sec = chunk.start / 1000.0
+                transcription_clean = self._add_speaker_tags(
+                    timestamped_result, chunk.speaker_events, chunk_start_sec
+                )
+
                 log.info(
                     f"Transcription for chunk {chunk.start} - {chunk.end}: {transcription}"
                 )
+                log.info(f"Clean transcription: {transcription_clean}")
                 processed_chunks.append(
                     ProcessedAudioChunk(
                         audio_chunk=chunk,
                         transcription=transcription,
+                        transcription_clean=transcription_clean,
                     )
                 )
 
             processed_file = ProcessedAudioFile(
                 source_file=audio_file_path.as_posix(),
                 output_directory=output_dir.as_posix(),
+                gcs_audio_path=gcs_audio_path,
                 audio_duration_sec=audio_duration,
                 chunks=processed_chunks,
                 success=True,
@@ -232,6 +300,7 @@ class ChunkerWorker:
             return ProcessedAudioFile(
                 source_file=str(audio_file_path),
                 output_directory=str(output_dir),
+                gcs_audio_path=gcs_audio_path,
                 audio_duration_sec=get_audio_duration(audio_file_path),
                 chunks=[],
                 processing_window={"start": 0.0, "end": 0.0},
@@ -254,18 +323,25 @@ class ChunkerWorker:
         try:
             upload_success = True
 
+            # Create GCS path prefix based on original file path
+            original_file_path = Path(processed_file.source_file)
+            original_file_name = original_file_path.stem  # filename without extension
+            gcs_prefix = f"{original_file_name}/"
+
             for chunk in processed_file.chunks:
                 chunk_path = job_output_dir / chunk.audio_chunk.file_path
 
+                # Create GCS path with prefix
+                gcs_chunk_path = gcs_prefix + chunk.audio_chunk.file_path
+
                 if chunk_path.exists():
-                    success = self.gcs_client.upload_chunk(
-                        chunk_path, chunk.audio_chunk.file_path
-                    )
-                    if not success:
+                    success = self.gcs_client.upload_chunk(chunk_path, gcs_chunk_path)
+                    if success:
+                        # Set the GCS path for database storage
+                        chunk.audio_chunk.gcs_file_path = gcs_chunk_path
+                    else:
                         upload_success = False
-                        log.error(
-                            f"Failed to upload chunk {chunk.audio_chunk.file_path}"
-                        )
+                        log.error(f"Failed to upload chunk {gcs_chunk_path}")
                 else:
                     log.warning(f"Chunk file not found: {chunk_path}")
                     upload_success = False
@@ -325,14 +401,74 @@ class ChunkerWorker:
                 log.error(f"Error in worker loop: {e}")
                 time.sleep(5)  # Wait before retrying
 
+    def _add_speaker_tags(
+        self,
+        timestamped_result: dict,
+        speaker_events: list[SpeakerEvent],
+        chunk_start_sec: float,
+    ) -> str:
+        """Add speaker tags to timestamped transcription segments based on actual speaker events."""
+        if not timestamped_result.get("segments"):
+            return timestamped_result.get("text", "")
+
+        # Create a mapping of speakers in order of first appearance in this chunk
+        speaker_mapping = {}
+        speaker_counter = 1
+
+        transcript_parts = []
+        current_speaker = None
+
+        for segment in timestamped_result["segments"]:
+            segment_text = segment["text"].strip()
+            if not segment_text:
+                continue
+
+            # Get segment timing (whisper timestamps are relative to chunk start)
+            segment_start = segment.get("start", 0)
+            segment_end = segment.get("end", segment_start)
+
+            # Convert to absolute time by adding chunk start time
+            absolute_segment_start = chunk_start_sec + segment_start
+            absolute_segment_end = chunk_start_sec + segment_end
+            absolute_segment_mid = (absolute_segment_start + absolute_segment_end) / 2
+
+            # Find the speaker for this segment based on overlap with speaker events
+            segment_speaker = None
+            for event in speaker_events:
+                # Check if segment overlaps with this speaker event
+                if (
+                    absolute_segment_start < event.end
+                    and absolute_segment_end > event.start
+                ) or (event.start <= absolute_segment_mid <= event.end):
+                    segment_speaker = event.speaker
+                    break
+
+            # Only add speaker tag if speaker changes or it's the first segment
+            if segment_speaker and segment_speaker != current_speaker:
+                # Create mapping for new speakers as they appear
+                if segment_speaker not in speaker_mapping:
+                    speaker_mapping[segment_speaker] = f"S{speaker_counter}"
+                    speaker_counter += 1
+
+                # Map to relative speaker tag (S1, S2, etc.)
+                relative_speaker = speaker_mapping[segment_speaker]
+                speaker_tag = f"[{relative_speaker}]"
+                transcript_parts.append(f"{speaker_tag} {segment_text}")
+                current_speaker = segment_speaker
+            else:
+                # Same speaker, just add the text
+                transcript_parts.append(segment_text)
+
+        return " ".join(transcript_parts)
+
 
 def create_chunks(
     speaker_events: list[SpeakerEvent],
     original_audio_path: Path,
     output_dir: Path,
     window_size_sec: float = 30.0,
-    skip_start_sec: float = 120.0,  # 2 minutes
-    skip_end_sec: float = 180.0,  # 3 minutes
+    skip_start_sec: float = 100.0,
+    skip_end_sec: float = 100.0,
 ) -> tuple[list[AudioChunk], float, tuple[float, float]]:
     """
     Create audio chunks from speaker events using a sliding window approach.
@@ -467,17 +603,17 @@ def create_chunks(
 
 
 def queue_audio_file(
-    audio_file_path: str,
+    gcs_audio_path: str,
     queue_name: str = "audio_processing",
     window_size_sec: float = 30.0,
     skip_start_sec: float = 120.0,
     skip_end_sec: float = 180.0,
 ):
     """
-    Queue an audio file for processing.
+    Queue a GCS audio file for processing.
 
     Args:
-        audio_file_path: Path to the audio file
+        gcs_audio_path: GCS path to the audio file
         queue_name: Redis queue name
         window_size_sec: Size of sliding window in seconds
         skip_start_sec: Time to skip from start
@@ -488,14 +624,14 @@ def queue_audio_file(
     """
     # Check if file has already been processed
     audio_store = AudioStore()
-    if audio_store.is_audio_file_processed(audio_file_path):
-        log.info(f"Audio file {audio_file_path} has already been processed, skipping")
+    if audio_store.is_audio_file_processed(gcs_audio_path):
+        log.info(f"Audio file {gcs_audio_path} has already been processed, skipping")
         return False
 
     redis_client = get_redis_connection()
 
     job_data = {
-        "audio_file_path": audio_file_path,
+        "audio_file_path": gcs_audio_path,
         "window_size_sec": window_size_sec,
         "skip_start_sec": skip_start_sec,
         "skip_end_sec": skip_end_sec,
@@ -506,18 +642,18 @@ def queue_audio_file(
     return True
 
 
-def queue_audio_batch(
-    source_folder: str,
+def queue_from_file(
+    mp3_file_list: str,
     queue_name: str = "audio_processing",
     window_size_sec: float = 30.0,
     skip_start_sec: float = 120.0,
     skip_end_sec: float = 180.0,
 ) -> int:
     """
-    Queue all audio files in a folder for processing.
+    Queue GCS audio files from a file list for processing.
 
     Args:
-        source_folder: Path to the source folder containing audio files
+        mp3_file_list: Path to file containing GCS MP3 paths (one per line)
         queue_name: Redis queue name
         window_size_sec: Size of sliding window in seconds
         skip_start_sec: Time to skip from start
@@ -526,31 +662,33 @@ def queue_audio_batch(
     Returns:
         Number of files queued
     """
-    source_path = Path(source_folder)
+    file_path = Path(mp3_file_list)
 
-    if not source_path.exists():
-        raise FileNotFoundError(f"Source folder not found: {source_path}")
+    if not file_path.exists():
+        raise FileNotFoundError(f"MP3 file list not found: {file_path}")
 
-    audio_files = find_audio_files(source_path)
+    # Read GCS MP3 file paths from file
+    with open(file_path, "r", encoding="utf-8") as f:
+        gcs_mp3_paths = [line.strip() for line in f if line.strip()]
 
-    if not audio_files:
-        log.warning(f"No audio files found in: {source_path}")
+    if not gcs_mp3_paths:
+        log.warning(f"No GCS MP3 paths found in: {file_path}")
         return 0
 
-    log.info(f"Found {len(audio_files)} audio files in: {source_path}")
+    log.info(f"Found {len(gcs_mp3_paths)} GCS MP3 paths in: {file_path}")
 
     # Check which files have already been processed
     audio_store = AudioStore()
     processed_count = 0
     queued_count = 0
 
-    for audio_file in audio_files:
-        if audio_store.is_audio_file_processed(str(audio_file)):
-            log.info(f"Audio file {audio_file} has already been processed, skipping")
+    for gcs_mp3_path in gcs_mp3_paths:
+        if audio_store.is_audio_file_processed(gcs_mp3_path):
+            log.info(f"Audio file {gcs_mp3_path} has already been processed, skipping")
             processed_count += 1
         else:
             success = queue_audio_file(
-                str(audio_file),
+                gcs_mp3_path,
                 queue_name,
                 window_size_sec,
                 skip_start_sec,
@@ -560,7 +698,7 @@ def queue_audio_batch(
                 queued_count += 1
 
     log.info(
-        f"Queued {queued_count} out of {len(audio_files)} audio files ({processed_count} already processed)"
+        f"Queued {queued_count} out of {len(gcs_mp3_paths)} audio files ({processed_count} already processed)"
     )
     return queued_count
 
@@ -573,13 +711,13 @@ def main():
         epilog="""
 Commands:
   worker    - Start a worker to process jobs from Redis queue
-  queue     - Queue audio files for processing
-  batch     - Queue all audio files in a folder
+  queue     - Queue a single GCS audio file for processing
+  file      - Queue GCS audio files from a file list
 
 Examples:
   %(prog)s worker
-  %(prog)s queue /path/to/audio/file.mp3
-  %(prog)s batch /path/to/audio/folder
+  %(prog)s queue gs://bucket/path/to/audio/file.mp3
+  %(prog)s file bucket_mp3_files.txt
         """,
     )
 
@@ -605,10 +743,17 @@ Examples:
         default="/tmp/parkiet_chunks",
         help="Temporary directory for processing (default: /tmp/parkiet_chunks)",
     )
+    worker_parser.add_argument(
+        "--gpu-id",
+        "-g",
+        type=int,
+        default=0,
+        help="GPU ID to use for processing (default: 0)",
+    )
 
     # Queue command
-    queue_parser = subparsers.add_parser("queue", help="Queue single audio file")
-    queue_parser.add_argument("audio_file", help="Path to audio file")
+    queue_parser = subparsers.add_parser("queue", help="Queue single GCS audio file")
+    queue_parser.add_argument("gcs_audio_path", help="GCS path to audio file")
     queue_parser.add_argument(
         "--queue-name",
         "-q",
@@ -635,31 +780,33 @@ Examples:
         help="Time to skip from end in seconds (default: 120.0)",
     )
 
-    # Batch command
-    batch_parser = subparsers.add_parser(
-        "batch", help="Queue all audio files in folder"
+    # File command
+    file_parser = subparsers.add_parser(
+        "file", help="Queue GCS audio files from file list"
     )
-    batch_parser.add_argument("source_folder", help="Path to source folder")
-    batch_parser.add_argument(
+    file_parser.add_argument(
+        "mp3_file_list", help="Path to file containing GCS MP3 paths"
+    )
+    file_parser.add_argument(
         "--queue-name",
         "-q",
         default="audio_processing",
         help="Redis queue name (default: audio_processing)",
     )
-    batch_parser.add_argument(
+    file_parser.add_argument(
         "--window-size",
         "-s",
         type=float,
         default=30.0,
         help="Size of sliding window in seconds (default: 30.0)",
     )
-    batch_parser.add_argument(
+    file_parser.add_argument(
         "--skip-start",
         type=float,
         default=120.0,
         help="Time to skip from start in seconds (default: 120.0)",
     )
-    batch_parser.add_argument(
+    file_parser.add_argument(
         "--skip-end",
         type=float,
         default=180.0,
@@ -673,24 +820,25 @@ Examples:
             queue_name=args.queue_name,
             whisper_checkpoint_path=args.whisper_checkpoint_path,
             temp_dir=args.temp_dir,
+            gpu_id=args.gpu_id,
         )
         worker.start_listening()
 
     elif args.command == "queue":
         success = queue_audio_file(
-            args.audio_file,
+            args.gcs_audio_path,
             args.queue_name,
             args.window_size,
             args.skip_start,
             args.skip_end,
         )
         if success:
-            log.info(f"Successfully queued: {args.audio_file}")
+            log.info(f"Successfully queued: {args.gcs_audio_path}")
         else:
-            log.info(f"File {args.audio_file} was already processed, not queued")
-    elif args.command == "batch":
-        count = queue_audio_batch(
-            args.source_folder,
+            log.info(f"File {args.gcs_audio_path} was already processed, not queued")
+    elif args.command == "file":
+        count = queue_from_file(
+            args.mp3_file_list,
             args.queue_name,
             args.window_size,
             args.skip_start,
