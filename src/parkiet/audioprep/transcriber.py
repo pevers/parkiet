@@ -9,9 +9,6 @@ class Transcriber:
         self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
             checkpoint_path, low_cpu_mem_usage=True, use_safetensors=True
         )
-        # Explicitly set generation config to avoid warnings
-        self.model.generation_config.suppress_tokens = []
-        self.model.generation_config.begin_suppress_tokens = [220, 50257]
         self.processor = AutoProcessor.from_pretrained(checkpoint_path)
         self.device = (
             device

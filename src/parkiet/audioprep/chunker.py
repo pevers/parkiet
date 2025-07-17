@@ -1,5 +1,6 @@
 import argparse
 import logging
+import random
 from pathlib import Path
 import time
 import torch
@@ -683,6 +684,9 @@ def queue_from_file(
         return 0
 
     log.info(f"Found {len(gcs_mp3_paths)} GCS MP3 paths in: {file_path}")
+
+    # Random shuffle the list because we will probably not be able to process all files
+    random.shuffle(gcs_mp3_paths)
 
     # Check which files have already been processed
     audio_store = AudioStore()
