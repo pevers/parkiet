@@ -157,6 +157,7 @@ class AudioStore:
     def store_audio_events(
         self,
         audio_file_id: int,
+        chunk_id: int,
         speaker_events: list[SpeakerEvent],
         speaker_id_map: dict[str, int] | None = None,
     ) -> list[int]:
@@ -165,6 +166,7 @@ class AudioStore:
 
         Args:
             audio_file_id: ID of the audio file
+            chunk_id: ID of the chunk these events belong to
             speaker_events: List of speaker events
             speaker_id_map: Optional mapping of speaker labels to speaker IDs
 
@@ -182,17 +184,17 @@ class AudioStore:
                 cursor.execute(
                     """
                     INSERT INTO audio_events 
-                    (audio_file_id, speaker_id, start_time_sec, end_time_sec, speaker_label)
-                    VALUES (%s, %s, %s, %s, %s)
+                    (audio_file_id, chunk_id, speaker_id, start_time_sec, end_time_sec, speaker_label)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """,
-                    (audio_file_id, speaker_id, event.start, event.end, event.speaker),
+                    (audio_file_id, chunk_id, speaker_id, event.start, event.end, event.speaker),
                 )
 
                 event_id = cursor.fetchone()["id"]  # type: ignore
                 event_ids.append(event_id)
 
-        log.info(f"Stored {len(event_ids)} audio events for audio file {audio_file_id}")
+        log.info(f"Stored {len(event_ids)} audio events for chunk {chunk_id}")
         return event_ids
 
     def store_audio_chunks(
@@ -237,41 +239,6 @@ class AudioStore:
         log.info(f"Stored {len(chunk_ids)} audio chunks for audio file {audio_file_id}")
         return chunk_ids
 
-    def store_chunk_event_links(
-        self,
-        chunk_id: int,
-        event_ids: list[int],
-    ) -> list[int]:
-        """
-        Store links between a chunk and its events.
-
-        Args:
-            chunk_id: ID of the chunk
-            event_ids: List of event IDs to link to this chunk
-
-        Returns:
-            link_ids: List of link IDs that were inserted
-        """
-        link_ids = []
-
-        with self.db.get_cursor() as cursor:
-            for event_id in event_ids:
-                cursor.execute(
-                    """
-                    INSERT INTO chunk_event_links 
-                    (chunk_id, event_id)
-                    VALUES (%s, %s)
-                    RETURNING id
-                """,
-                    (chunk_id, event_id),
-                )
-
-                link_id = cursor.fetchone()["id"]  # type: ignore
-                link_ids.append(link_id)
-
-        log.debug(f"Stored {len(link_ids)} chunk-event links for chunk {chunk_id}")
-        return link_ids
-
     def store_processed_file(
         self,
         processed_file: ProcessedAudioFile,
@@ -296,16 +263,10 @@ class AudioStore:
         # Store chunks
         chunk_ids = self.store_audio_chunks(audio_file_id, processed_file.chunks)
 
-        # Store chunk-event links
+        # Store events for each chunk
         for i, chunk in enumerate(processed_file.chunks):
-            # Store events for this chunk and get their IDs
             chunk_events = chunk.audio_chunk.speaker_events
-            chunk_event_ids = self.store_audio_events(audio_file_id, chunk_events, speaker_id_map)
-            
-            self.store_chunk_event_links(
-                chunk_ids[i],
-                chunk_event_ids,
-            )
+            self.store_audio_events(audio_file_id, chunk_ids[i], chunk_events, speaker_id_map)
 
         log.info(
             f"Successfully stored all data for audio file {processed_file.source_file}"
@@ -326,10 +287,9 @@ class AudioStore:
         with self.db.get_cursor() as cursor:
             cursor.execute(
                 """
-                SELECT SUM(ae.end_time_sec - ae.start_time_sec) as total_duration
-                FROM chunk_event_links cel
-                JOIN audio_events ae ON cel.event_id = ae.id
-                WHERE cel.chunk_id = %s AND ae.speaker_id = %s
+                SELECT SUM(end_time_sec - start_time_sec) as total_duration
+                FROM audio_events
+                WHERE chunk_id = %s AND speaker_id = %s
             """,
                 (chunk_id, speaker_id),
             )
@@ -350,12 +310,34 @@ class AudioStore:
         with self.db.get_cursor() as cursor:
             cursor.execute(
                 """
-                SELECT ae.speaker_id, SUM(ae.end_time_sec - ae.start_time_sec) as duration_sec
-                FROM chunk_event_links cel
-                JOIN audio_events ae ON cel.event_id = ae.id
-                WHERE cel.chunk_id = %s AND ae.speaker_id IS NOT NULL
-                GROUP BY ae.speaker_id
+                SELECT speaker_id, SUM(end_time_sec - start_time_sec) as duration_sec
+                FROM audio_events
+                WHERE chunk_id = %s AND speaker_id IS NOT NULL
+                GROUP BY speaker_id
                 ORDER BY duration_sec DESC
+            """,
+                (chunk_id,),
+            )
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_chunk_events(self, chunk_id: int) -> list[dict]:
+        """
+        Get all audio events for a specific chunk.
+
+        Args:
+            chunk_id: ID of the chunk
+
+        Returns:
+            List of dictionaries with event details
+        """
+        with self.db.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, speaker_id, speaker_label, start_time_sec, end_time_sec
+                FROM audio_events
+                WHERE chunk_id = %s
+                ORDER BY start_time_sec
             """,
                 (chunk_id,),
             )

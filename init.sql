@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS audio_chunks (
 CREATE TABLE IF NOT EXISTS audio_events (
     id SERIAL PRIMARY KEY,
     audio_file_id INTEGER NOT NULL REFERENCES audio_files(id),
+    chunk_id INTEGER NOT NULL REFERENCES audio_chunks(id),
     speaker_id INTEGER REFERENCES speakers(id),
     start_time_sec FLOAT NOT NULL,
     end_time_sec FLOAT NOT NULL,
@@ -43,19 +44,11 @@ CREATE TABLE IF NOT EXISTS audio_events (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS chunk_event_links (
-    id SERIAL PRIMARY KEY,
-    chunk_id INTEGER NOT NULL REFERENCES audio_chunks(id),
-    event_id INTEGER NOT NULL REFERENCES audio_events(id),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
 -- Create indexes for better query performance
 CREATE INDEX IF NOT EXISTS audio_chunks_audio_file_id_idx ON audio_chunks (audio_file_id);
 CREATE INDEX IF NOT EXISTS audio_events_audio_file_id_idx ON audio_events (audio_file_id);
+CREATE INDEX IF NOT EXISTS audio_events_chunk_id_idx ON audio_events (chunk_id);
 CREATE INDEX IF NOT EXISTS audio_events_speaker_id_idx ON audio_events (speaker_id);
-CREATE INDEX IF NOT EXISTS chunk_event_links_chunk_id_idx ON chunk_event_links (chunk_id);
-CREATE INDEX IF NOT EXISTS chunk_event_links_event_id_idx ON chunk_event_links (event_id);
 
 -- Grant necessary permissions
 GRANT ALL PRIVILEGES ON DATABASE parkiet TO postgres;
