@@ -265,9 +265,9 @@ class ChunkerWorker:
                 )
 
                 log.info(
-                    f"Transcription for chunk {chunk.start} - {chunk.end}: {transcription}"
+                    f"\nTranscription for chunk {chunk.start} - {chunk.end}:\n{transcription}\n"
                 )
-                log.info(f"Clean transcription: {transcription_clean}")
+                log.info(f"\nClean transcription:\n{transcription_clean} {timestamped_result['confidence']}\n")
                 processed_chunks.append(
                     ProcessedAudioChunk(
                         audio_chunk=chunk,

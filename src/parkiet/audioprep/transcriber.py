@@ -4,7 +4,6 @@ from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
 import torch
 import librosa
 import whisper_timestamped as whisper
-import numpy as np
 
 
 class Transcriber:
