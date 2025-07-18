@@ -2,13 +2,11 @@ import argparse
 import logging
 import random
 from pathlib import Path
-import statistics
 import time
 import torch
 import shutil
 import warnings
 from dotenv import load_dotenv
-import concurrent.futures
 
 warnings.filterwarnings(
     "ignore", message="The MPEG_LAYER_III subtype is unknown to TorchAudio"
@@ -23,7 +21,6 @@ from parkiet.audioprep.schemas import (
 )
 from parkiet.utils.audio import (
     get_audio_duration,
-    extract_audio_segment,
     extract_audio_segments_parallel,
     find_natural_break_after_time,
     validate_audio_file,
@@ -73,7 +70,7 @@ class ChunkerWorker:
         self.redis_client = get_redis_connection()
         self.gcs_client = get_gcs_client()
         self.audio_store = AudioStore()
-        
+
         # Initialize device configuration
         if torch.cuda.is_available():
             self.device = torch.device(f"cuda:{gpu_id}")
@@ -82,7 +79,7 @@ class ChunkerWorker:
             self.device = torch.device("cpu")
 
         self.whisper_checkpoint_path = whisper_checkpoint_path
-        
+
         # Model instances (will be loaded on demand)
         self.speaker_extractor = None
         self.transcriber = None
@@ -196,17 +193,19 @@ class ChunkerWorker:
 
                 # Validate audio file integrity before processing
                 if not validate_audio_file(local_audio_path):
-                    log.error(f"Audio file {gcs_audio_path} is corrupted or invalid, skipping")
+                    log.error(
+                        f"Audio file {gcs_audio_path} is corrupted or invalid, skipping"
+                    )
                     return False
 
                 # Convert to WAV format for consistent processing
                 wav_filename = f"{Path(gcs_filename).stem}.wav"
                 wav_audio_path = job_output_dir / wav_filename
-                
+
                 try:
                     convert_to_wav(local_audio_path, wav_audio_path)
                     log.info(f"Converted {gcs_filename} to WAV format: {wav_filename}")
-                    
+
                     # Clean up the original downloaded file to save disk space
                     local_audio_path.unlink()
                     log.info(f"Cleaned up original downloaded file: {gcs_filename}")
@@ -287,21 +286,21 @@ class ChunkerWorker:
         try:
             log.info(f"Processing: {audio_file_path.name}")
             log.info(f"Output directory: {output_dir}")
-            
+
             # Load speaker extractor for speaker detection
             self._load_speaker_extractor()
             log.info("Extracting speaker events with pyannote...")
-            
+
             if self.speaker_extractor is None:
                 raise RuntimeError("Failed to load speaker extractor model")
-                
+
             speaker_events, speaker_embeddings = (
                 self.speaker_extractor.extract_speaker_events(audio_file_path)
             )
             log.info(
                 f"Found {len(speaker_events)} speaker events for {len(speaker_embeddings)} unique speakers"
             )
-            
+
             # Unload speaker extractor after use to free GPU memory
             self._unload_speaker_extractor()
 
@@ -330,24 +329,28 @@ class ChunkerWorker:
             )
 
             log.info(f"Creating transcription for {len(chunks)} chunks")
-            
+
             # Load transcription models on demand
             self._load_transcribers()
-            
+
             if self.transcriber is None or self.timestamped_transcriber is None:
                 raise RuntimeError("Failed to load transcription models")
-            
+
             processed_chunks = []
             for _, chunk in enumerate(chunks):
                 chunk_full_path = output_dir / chunk.file_path
-                
+
                 # Check if chunk file exists before attempting transcription
                 if not chunk_full_path.exists():
-                    log.warning(f"Chunk file not found, skipping transcription: {chunk_full_path}")
+                    log.warning(
+                        f"Chunk file not found, skipping transcription: {chunk_full_path}"
+                    )
                     continue
-                
+
                 try:
-                    transcription = self.transcriber.transcribe_with_confidence(chunk_full_path.as_posix())
+                    transcription = self.transcriber.transcribe_with_confidence(
+                        chunk_full_path.as_posix()
+                    )
 
                     # Get timestamped transcription with speaker tags
                     timestamped_result = (
@@ -364,7 +367,9 @@ class ChunkerWorker:
                     log.info(
                         f"\nTranscription for chunk {chunk.start} - {chunk.end}:\n{transcription}\n"
                     )
-                    log.info(f"\nClean transcription:\n{transcription_clean} {timestamped_result['confidence']}\n")
+                    log.info(
+                        f"\nClean transcription:\n{transcription_clean} {timestamped_result['confidence']}\n"
+                    )
                     processed_chunks.append(
                         ProcessedAudioChunk(
                             audio_chunk=chunk,
@@ -377,7 +382,7 @@ class ChunkerWorker:
                 except Exception as e:
                     log.error(f"Failed to transcribe chunk {chunk_full_path}: {e}")
                     continue
-            
+
             # Unload transcription models after use to free GPU memory
             self._unload_transcribers()
 
@@ -387,7 +392,7 @@ class ChunkerWorker:
                 gcs_audio_path=gcs_audio_path,
                 audio_duration_sec=audio_duration,
                 chunks=processed_chunks,
-                success=True,
+                success=len(processed_chunks) > 0,
                 processing_window={
                     "start": processing_window[0],
                     "end": processing_window[1],
@@ -676,8 +681,10 @@ def create_chunks(
 
             # Create GCS path for the chunk
             original_file_path = Path(gcs_audio_path)
+            # Include parent directory name to avoid naming conflicts
+            parent_dir = original_file_path.parent.name
             original_file_name = original_file_path.stem
-            gcs_chunk_path = f"{original_file_name}/{chunk_filename}"
+            gcs_chunk_path = f"{parent_dir}/{original_file_name}/{chunk_filename}"
 
             chunk = AudioChunk(
                 start=chunk_start * 1000,
@@ -711,40 +718,41 @@ def create_chunks(
             log.warning(
                 f"Final chunk {chunk_start:.1f}s-{chunk_end:.1f}s is too long ({chunk_span:.1f}s), skipping"
             )
-            return chunks, audio_duration, (actual_start, actual_end)
-
         # Skip chunks that are too short (less than 1 second)
-        if chunk_span < 1.0:
+        elif chunk_span < 1.0:
             log.warning(
                 f"Skipping final chunk {chunk_start:.1f}s-{chunk_end:.1f}s as it's too short ({chunk_span:.1f}s)"
             )
-            return chunks, audio_duration, (actual_start, actual_end)
+        else:
+            chunk_id = str(ULID())
+            chunk_filename = f"{chunk_id}.wav"
+            chunk_path = output_dir / chunk_filename
 
-        chunk_id = str(ULID())
-        chunk_filename = f"{chunk_id}.wav"
-        chunk_path = output_dir / chunk_filename
+            # Add task to the list for parallel extraction
+            chunk_tasks.append(
+                (original_audio_path, chunk_start, chunk_end, chunk_path)
+            )
 
-        # Add task to the list for parallel extraction
-        chunk_tasks.append((original_audio_path, chunk_start, chunk_end, chunk_path))
+            # Create GCS path for the chunk
+            original_file_path = Path(gcs_audio_path)
+            # Include parent directory name to avoid naming conflicts
+            parent_dir = original_file_path.parent.name
+            original_file_name = original_file_path.stem
+            gcs_chunk_path = f"{parent_dir}/{original_file_name}/{chunk_filename}"
 
-        # Create GCS path for the chunk
-        original_file_path = Path(gcs_audio_path)
-        original_file_name = original_file_path.stem
-        gcs_chunk_path = f"{original_file_name}/{chunk_filename}"
+            chunk = AudioChunk(
+                start=chunk_start * 1000,
+                end=chunk_end * 1000,
+                file_path=chunk_filename,
+                speaker_events=current_chunk_events,
+                gcs_file_path=gcs_chunk_path,
+            )
 
-        chunk = AudioChunk(
-            start=chunk_start * 1000,
-            end=chunk_end * 1000,
-            file_path=chunk_filename,
-            speaker_events=current_chunk_events,
-            gcs_file_path=gcs_chunk_path,
-        )
-
-        chunks.append(chunk)
-        log.debug(
-            f"Created final chunk {len(chunks)}: {chunk_start:.1f}s-{chunk_end:.1f}s "
-            f"({len(current_chunk_events)} events, {current_chunk_duration:.1f}s)"
-        )
+            chunks.append(chunk)
+            log.debug(
+                f"Created final chunk {len(chunks)}: {chunk_start:.1f}s-{chunk_end:.1f}s "
+                f"({len(current_chunk_events)} events, {current_chunk_duration:.1f}s)"
+            )
 
     # Extract all audio segments in parallel
     if chunk_tasks:

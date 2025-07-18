@@ -188,7 +188,14 @@ class AudioStore:
                     VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """,
-                    (audio_file_id, chunk_id, speaker_id, event.start, event.end, event.speaker),
+                    (
+                        audio_file_id,
+                        chunk_id,
+                        speaker_id,
+                        event.start,
+                        event.end,
+                        event.speaker,
+                    ),
                 )
 
                 event_id = cursor.fetchone()["id"]  # type: ignore
@@ -266,7 +273,9 @@ class AudioStore:
         # Store events for each chunk
         for i, chunk in enumerate(processed_file.chunks):
             chunk_events = chunk.audio_chunk.speaker_events
-            self.store_audio_events(audio_file_id, chunk_ids[i], chunk_events, speaker_id_map)
+            self.store_audio_events(
+                audio_file_id, chunk_ids[i], chunk_events, speaker_id_map
+            )
 
         log.info(
             f"Successfully stored all data for audio file {processed_file.source_file}"

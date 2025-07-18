@@ -10,43 +10,47 @@ log = logging.getLogger(__name__)
 def validate_audio_file(audio_path: Path) -> bool:
     """
     Validate audio file integrity using ffprobe.
-    
+
     Args:
         audio_path: Path to the audio file to validate
-        
+
     Returns:
         True if file is valid, False if corrupted or invalid
     """
     cmd = [
         "ffprobe",
-        "-v", "error",
-        "-select_streams", "a:0",
-        "-show_entries", "stream=codec_type,duration",
-        "-of", "csv=p=0",
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=codec_type,duration",
+        "-of",
+        "csv=p=0",
         audio_path.as_posix(),
     ]
-    
+
     try:
         result = subprocess.run(
-            cmd, 
-            capture_output=True, 
-            text=True, 
-            timeout=10  # Short timeout for validation
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=10,  # Short timeout for validation
         )
-        
+
         if result.returncode != 0:
             log.error(f"Audio file validation failed for {audio_path}: {result.stderr}")
             return False
-            
+
         # Check if we got valid output
         output = result.stdout.strip()
         if not output or "audio" not in output:
             log.error(f"Invalid audio stream in {audio_path}")
             return False
-            
+
         log.info(f"Audio file {audio_path} validated successfully")
         return True
-        
+
     except subprocess.TimeoutExpired:
         log.error(f"Timeout validating audio file {audio_path} - likely corrupted")
         return False
@@ -129,14 +133,13 @@ def extract_audio_segments_parallel(
     """
     if not chunk_tasks:
         return
-        
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks and collect futures with their corresponding tasks
         future_to_task = {
-            executor.submit(extract_audio_segment, *task): task 
-            for task in chunk_tasks
+            executor.submit(extract_audio_segment, *task): task for task in chunk_tasks
         }
-        
+
         # Wait for all futures to complete and handle individual failures
         failed_count = 0
         for future in concurrent.futures.as_completed(future_to_task):
@@ -147,9 +150,11 @@ def extract_audio_segments_parallel(
                 # Log the error but don't stop processing other chunks
                 failed_count += 1
                 log.error(f"Failed to extract audio segment {task[3]}: {e}")
-        
+
         successful_count = len(chunk_tasks) - failed_count
-        log.info(f"Parallel audio extraction completed: {successful_count} successful, {failed_count} failed out of {len(chunk_tasks)} total")
+        log.info(
+            f"Parallel audio extraction completed: {successful_count} successful, {failed_count} failed out of {len(chunk_tasks)} total"
+        )
 
 
 def find_audio_files(source_folder: Path) -> list[Path]:
@@ -181,7 +186,7 @@ def convert_to_wav(
 ) -> None:
     """
     Convert audio file to WAV format using ffmpeg.
-    
+
     Args:
         input_path: Path to the input audio file
         output_path: Path for the output WAV file
@@ -189,23 +194,24 @@ def convert_to_wav(
         channels: Number of audio channels (default: 1 for mono)
     """
     log.info(f"Converting {input_path} to WAV format at {output_path}")
-    
+
     ffmpeg_cmd = [
         "ffmpeg",
         "-y",  # Overwrite output file if it exists
-        "-i", input_path.as_posix(),
-        "-ar", str(sample_rate),  # Set sample rate
-        "-ac", str(channels),     # Set number of channels
-        "-c:a", "pcm_s16le",      # Use 16-bit PCM encoding
+        "-i",
+        input_path.as_posix(),
+        "-ar",
+        str(sample_rate),  # Set sample rate
+        "-ac",
+        str(channels),  # Set number of channels
+        "-c:a",
+        "pcm_s16le",  # Use 16-bit PCM encoding
         output_path.as_posix(),
     ]
-    
+
     try:
         subprocess.run(
-            ffmpeg_cmd, 
-            check=True, 
-            stdout=subprocess.DEVNULL, 
-            stderr=subprocess.DEVNULL
+            ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         log.info(f"Successfully converted {input_path} to {output_path}")
     except subprocess.CalledProcessError as e:
