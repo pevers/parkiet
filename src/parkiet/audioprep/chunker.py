@@ -74,16 +74,65 @@ class ChunkerWorker:
         self.gcs_client = get_gcs_client()
         self.audio_store = AudioStore()
         
-        # Initialize AI models
+        # Initialize device configuration
         if torch.cuda.is_available():
             self.device = torch.device(f"cuda:{gpu_id}")
             torch.cuda.set_device(gpu_id)
         else:
             self.device = torch.device("cpu")
 
-        self.speaker_extractor = SpeakerExtractor(self.device)
         self.whisper_checkpoint_path = whisper_checkpoint_path
         
+        # Model instances (will be loaded on demand)
+        self.speaker_extractor = None
+        self.transcriber = None
+        self.timestamped_transcriber = None
+
+    def _load_speaker_extractor(self):
+        """Load the speaker extractor model on demand."""
+        if self.speaker_extractor is None:
+            log.info("Loading speaker extractor model...")
+            self.speaker_extractor = SpeakerExtractor(str(self.device))
+            log.info("Speaker extractor model loaded successfully")
+
+    def _unload_speaker_extractor(self):
+        """Unload the speaker extractor model and free GPU memory."""
+        if self.speaker_extractor is not None:
+            log.info("Unloading speaker extractor model...")
+            del self.speaker_extractor
+            self.speaker_extractor = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            log.info("Speaker extractor model unloaded successfully")
+
+    def _load_transcribers(self):
+        """Load the transcription models on demand."""
+        if self.transcriber is None:
+            log.info("Loading transcription models...")
+            self.transcriber = Transcriber(self.whisper_checkpoint_path, self.device)
+            self.timestamped_transcriber = WhisperTimestampedTranscriber(
+                "openai/whisper-large-v3-turbo", self.device.type
+            )
+            log.info("Transcription models loaded successfully")
+
+    def _unload_transcribers(self):
+        """Unload the transcription models and free GPU memory."""
+        if self.transcriber is not None or self.timestamped_transcriber is not None:
+            log.info("Unloading transcription models...")
+            if self.transcriber is not None:
+                del self.transcriber
+                self.transcriber = None
+            if self.timestamped_transcriber is not None:
+                del self.timestamped_transcriber
+                self.timestamped_transcriber = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            log.info("Transcription models unloaded successfully")
+
+    def _cleanup_models(self):
+        """Clean up all loaded models and free GPU memory."""
+        self._unload_speaker_extractor()
+        self._unload_transcribers()
 
     def download_from_gcs(self, gcs_path: str, local_path: Path) -> bool:
         """
@@ -199,6 +248,9 @@ class ChunkerWorker:
                 # Clean up temporary directory
                 self.cleanup_temp_dir(job_output_dir)
 
+                # Clean up all models and free GPU memory
+                self._cleanup_models()
+
                 # Clear CUDA cache after each job to prevent memory accumulation
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
@@ -235,13 +287,23 @@ class ChunkerWorker:
         try:
             log.info(f"Processing: {audio_file_path.name}")
             log.info(f"Output directory: {output_dir}")
+            
+            # Load speaker extractor for speaker detection
+            self._load_speaker_extractor()
             log.info("Extracting speaker events with pyannote...")
+            
+            if self.speaker_extractor is None:
+                raise RuntimeError("Failed to load speaker extractor model")
+                
             speaker_events, speaker_embeddings = (
                 self.speaker_extractor.extract_speaker_events(audio_file_path)
             )
             log.info(
                 f"Found {len(speaker_events)} speaker events for {len(speaker_embeddings)} unique speakers"
             )
+            
+            # Unload speaker extractor after use to free GPU memory
+            self._unload_speaker_extractor()
 
             if not speaker_events:
                 log.warning("No speaker events found, skipping chunk creation")
@@ -268,10 +330,13 @@ class ChunkerWorker:
             )
 
             log.info(f"Creating transcription for {len(chunks)} chunks")
-            transcriber = Transcriber(self.whisper_checkpoint_path, self.device)
-            timestamped_transcriber = WhisperTimestampedTranscriber(
-                "openai/whisper-large-v3-turbo", self.device.type
-            )
+            
+            # Load transcription models on demand
+            self._load_transcribers()
+            
+            if self.transcriber is None or self.timestamped_transcriber is None:
+                raise RuntimeError("Failed to load transcription models")
+            
             processed_chunks = []
             for _, chunk in enumerate(chunks):
                 chunk_full_path = output_dir / chunk.file_path
@@ -282,11 +347,11 @@ class ChunkerWorker:
                     continue
                 
                 try:
-                    transcription = transcriber.transcribe_with_confidence(chunk_full_path.as_posix())
+                    transcription = self.transcriber.transcribe_with_confidence(chunk_full_path.as_posix())
 
                     # Get timestamped transcription with speaker tags
                     timestamped_result = (
-                        timestamped_transcriber.transcribe_with_confidence(
+                        self.timestamped_transcriber.transcribe_with_confidence(
                             chunk_full_path.as_posix()
                         )
                     )
@@ -312,6 +377,9 @@ class ChunkerWorker:
                 except Exception as e:
                     log.error(f"Failed to transcribe chunk {chunk_full_path}: {e}")
                     continue
+            
+            # Unload transcription models after use to free GPU memory
+            self._unload_transcribers()
 
             processed_file = ProcessedAudioFile(
                 source_file=audio_file_path.as_posix(),
@@ -434,9 +502,13 @@ class ChunkerWorker:
 
             except KeyboardInterrupt:
                 log.info("Received interrupt signal, shutting down worker")
+                # Clean up models before shutting down
+                self._cleanup_models()
                 break
             except Exception as e:
                 log.error(f"Error in worker loop: {e}")
+                # Clean up models in case of error
+                self._cleanup_models()
                 time.sleep(5)  # Wait before retrying
 
     def _add_speaker_tags(
