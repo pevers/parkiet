@@ -47,7 +47,6 @@ class Transcriber:
         input_features = inputs.input_features.to(self.device)
         result = self.model.generate(
             input_features,
-            output_scores=True,
             do_sample=False,
             num_beams=5,
             return_dict_in_generate=True,
