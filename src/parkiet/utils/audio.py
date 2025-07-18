@@ -8,6 +8,54 @@ from parkiet.audioprep.schemas import SpeakerEvent
 log = logging.getLogger(__name__)
 
 
+def validate_audio_file(audio_path: Path) -> bool:
+    """
+    Validate audio file integrity using ffprobe.
+    
+    Args:
+        audio_path: Path to the audio file to validate
+        
+    Returns:
+        True if file is valid, False if corrupted or invalid
+    """
+    cmd = [
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "a:0",
+        "-show_entries", "stream=codec_type,duration",
+        "-of", "csv=p=0",
+        audio_path.as_posix(),
+    ]
+    
+    try:
+        result = subprocess.run(
+            cmd, 
+            capture_output=True, 
+            text=True, 
+            timeout=10  # Short timeout for validation
+        )
+        
+        if result.returncode != 0:
+            log.error(f"Audio file validation failed for {audio_path}: {result.stderr}")
+            return False
+            
+        # Check if we got valid output
+        output = result.stdout.strip()
+        if not output or "audio" not in output:
+            log.error(f"Invalid audio stream in {audio_path}")
+            return False
+            
+        log.info(f"Audio file {audio_path} validated successfully")
+        return True
+        
+    except subprocess.TimeoutExpired:
+        log.error(f"Timeout validating audio file {audio_path} - likely corrupted")
+        return False
+    except Exception as e:
+        log.error(f"Error validating audio file {audio_path}: {e}")
+        return False
+
+
 def get_audio_duration(audio_path: Path) -> float:
     """Get audio duration in seconds using ffprobe."""
     cmd = [

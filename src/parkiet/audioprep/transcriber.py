@@ -48,6 +48,7 @@ class Transcriber:
         result = self.model.generate(
             input_features,
             do_sample=False,
+            output_scores=True,
             num_beams=5,
             return_dict_in_generate=True,
         )
@@ -80,7 +81,7 @@ class WhisperTimestampedTranscriber:
         )
         return result["text"]
 
-    def transcribe_with_timestamps(self, audio_path: str) -> dict:
+    def transcribe_with_confidence(self, audio_path: str) -> dict:
         result = whisper.transcribe(
             self.model, audio_path, language="nl", verbose=False
         )

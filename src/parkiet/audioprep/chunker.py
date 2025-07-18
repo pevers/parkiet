@@ -26,6 +26,7 @@ from parkiet.utils.audio import (
     extract_audio_segment,
     extract_audio_segments_parallel,
     find_natural_break_after_time,
+    validate_audio_file,
 )
 from parkiet.audioprep.speaker_extractor import SpeakerExtractor
 from parkiet.audioprep.transcriber import Transcriber, WhisperTimestampedTranscriber
@@ -144,6 +145,11 @@ class ChunkerWorker:
                     log.error(f"Failed to download {gcs_audio_path} from GCS")
                     return False
 
+                # Validate audio file integrity before processing
+                if not validate_audio_file(local_audio_path):
+                    log.error(f"Audio file {gcs_audio_path} is corrupted or invalid, skipping")
+                    return False
+
                 # Process the audio file
                 processed_file = self.process_single_audio_file(
                     local_audio_path,
@@ -254,7 +260,7 @@ class ChunkerWorker:
 
                 # Get timestamped transcription with speaker tags
                 timestamped_result = (
-                    self.timestamped_transcriber.transcribe_with_timestamps(
+                    self.timestamped_transcriber.transcribe_with_confidence(
                         chunk_full_path.as_posix()
                     )
                 )
@@ -307,7 +313,7 @@ class ChunkerWorker:
             return processed_file
 
         except Exception as e:
-            log.error(f"Error processing {audio_file_path.name}: {str(e)}")
+            log.exception(f"Error processing {audio_file_path.name}")
             return ProcessedAudioFile(
                 source_file=str(audio_file_path),
                 output_directory=str(output_dir),
@@ -546,6 +552,17 @@ def create_chunks(
             # Create chunk with current events
             chunk_start = current_chunk_events[0].start
             chunk_end = current_chunk_events[-1].end
+            chunk_span = chunk_end - chunk_start
+
+            # Skip chunks that are too short (less than 1 second)
+            if chunk_span < 1.0:
+                log.warning(
+                    f"Skipping chunk {chunk_start:.1f}s-{chunk_end:.1f}s as it's too short ({chunk_span:.1f}s)"
+                )
+                # Reset for next chunk
+                current_chunk_events = [event]
+                current_chunk_duration = event_duration
+                continue
 
             chunk_id = str(ULID())
             chunk_filename = f"{chunk_id}.mp3"
@@ -592,6 +609,13 @@ def create_chunks(
         if chunk_span > window_size_sec:
             log.warning(
                 f"Final chunk {chunk_start:.1f}s-{chunk_end:.1f}s is too long ({chunk_span:.1f}s), skipping"
+            )
+            return chunks, audio_duration, (actual_start, actual_end)
+
+        # Skip chunks that are too short (less than 1 second)
+        if chunk_span < 1.0:
+            log.warning(
+                f"Skipping final chunk {chunk_start:.1f}s-{chunk_end:.1f}s as it's too short ({chunk_span:.1f}s)"
             )
             return chunks, audio_duration, (actual_start, actual_end)
 
