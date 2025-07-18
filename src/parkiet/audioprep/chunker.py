@@ -250,7 +250,7 @@ class ChunkerWorker:
             processed_chunks = []
             for _, chunk in enumerate(chunks):
                 chunk_full_path = output_dir / chunk.file_path
-                transcription = self.transcriber.transcribe(chunk_full_path.as_posix())
+                transcription = self.transcriber.transcribe_with_confidence(chunk_full_path.as_posix())
 
                 # Get timestamped transcription with speaker tags
                 timestamped_result = (
@@ -271,8 +271,8 @@ class ChunkerWorker:
                 processed_chunks.append(
                     ProcessedAudioChunk(
                         audio_chunk=chunk,
-                        transcription=transcription,
-                        transcription_conf=transcription_conf,
+                        transcription=transcription["text"],
+                        transcription_conf=transcription["confidence"],
                         transcription_clean=transcription_clean,
                         transcription_clean_conf=timestamped_result["confidence"],
                     )
