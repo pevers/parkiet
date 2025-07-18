@@ -103,9 +103,17 @@ def extract_audio_segment(
         output_path.as_posix(),
     ]
 
-    subprocess.run(
-        ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
+    try:
+        subprocess.run(
+            ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        log.info(f"Successfully extracted audio segment to {output_path}")
+    except subprocess.CalledProcessError as e:
+        log.error(f"FFmpeg failed to extract audio segment {output_path}: {e}")
+        raise
+    except Exception as e:
+        log.error(f"Unexpected error extracting audio segment {output_path}: {e}")
+        raise
 
 
 def extract_audio_segments_parallel(
@@ -119,9 +127,29 @@ def extract_audio_segments_parallel(
         chunk_tasks: List of tuples (original_audio_path, start_sec, end_sec, output_path)
         max_workers: Maximum number of parallel workers (default: 4)
     """
+    if not chunk_tasks:
+        return
+        
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks and wait for completion
-        list(executor.map(lambda task: extract_audio_segment(*task), chunk_tasks))
+        # Submit all tasks and collect futures with their corresponding tasks
+        future_to_task = {
+            executor.submit(extract_audio_segment, *task): task 
+            for task in chunk_tasks
+        }
+        
+        # Wait for all futures to complete and handle individual failures
+        failed_count = 0
+        for future in concurrent.futures.as_completed(future_to_task):
+            task = future_to_task[future]
+            try:
+                future.result()  # This will raise any exception that occurred
+            except Exception as e:
+                # Log the error but don't stop processing other chunks
+                failed_count += 1
+                log.error(f"Failed to extract audio segment {task[3]}: {e}")
+        
+        successful_count = len(chunk_tasks) - failed_count
+        log.info(f"Parallel audio extraction completed: {successful_count} successful, {failed_count} failed out of {len(chunk_tasks)} total")
 
 
 def find_audio_files(source_folder: Path) -> list[Path]:

@@ -47,9 +47,6 @@ CREATE TABLE IF NOT EXISTS chunk_event_links (
     id SERIAL PRIMARY KEY,
     chunk_id INTEGER NOT NULL REFERENCES audio_chunks(id),
     event_id INTEGER NOT NULL REFERENCES audio_events(id),
-    event_start_in_chunk_sec FLOAT NOT NULL,  -- When the event starts relative to chunk start
-    event_end_in_chunk_sec FLOAT NOT NULL,   -- When the event ends relative to chunk start
-    event_duration_in_chunk_sec FLOAT NOT NULL, -- Duration of this event within the chunk
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

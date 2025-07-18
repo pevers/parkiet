@@ -52,6 +52,7 @@ class ChunkerWorker:
         temp_dir: str = "/tmp/parkiet_chunks",
         gpu_id: int = 0,
         max_workers: int = 4,
+        device: str = "cuda",
     ):
         """
         Initialize the chunker worker.
@@ -72,19 +73,17 @@ class ChunkerWorker:
         self.redis_client = get_redis_connection()
         self.gcs_client = get_gcs_client()
         self.audio_store = AudioStore()
-
+        
         # Initialize AI models
         if torch.cuda.is_available():
-            device = torch.device(f"cuda:{gpu_id}")
+            self.device = torch.device(f"cuda:{gpu_id}")
             torch.cuda.set_device(gpu_id)
         else:
-            device = torch.device("cpu")
+            self.device = torch.device("cpu")
 
-        self.speaker_extractor = SpeakerExtractor(device.type)
-        self.transcriber = Transcriber(whisper_checkpoint_path, device)
-        self.timestamped_transcriber = WhisperTimestampedTranscriber(
-            "openai/whisper-large-v3-turbo", device.type
-        )
+        self.speaker_extractor = SpeakerExtractor(self.device)
+        self.whisper_checkpoint_path = whisper_checkpoint_path
+        
 
     def download_from_gcs(self, gcs_path: str, local_path: Path) -> bool:
         """
@@ -269,36 +268,50 @@ class ChunkerWorker:
             )
 
             log.info(f"Creating transcription for {len(chunks)} chunks")
+            transcriber = Transcriber(self.whisper_checkpoint_path, self.device)
+            timestamped_transcriber = WhisperTimestampedTranscriber(
+                "openai/whisper-large-v3-turbo", self.device.type
+            )
             processed_chunks = []
             for _, chunk in enumerate(chunks):
                 chunk_full_path = output_dir / chunk.file_path
-                transcription = self.transcriber.transcribe_with_confidence(chunk_full_path.as_posix())
+                
+                # Check if chunk file exists before attempting transcription
+                if not chunk_full_path.exists():
+                    log.warning(f"Chunk file not found, skipping transcription: {chunk_full_path}")
+                    continue
+                
+                try:
+                    transcription = transcriber.transcribe_with_confidence(chunk_full_path.as_posix())
 
-                # Get timestamped transcription with speaker tags
-                timestamped_result = (
-                    self.timestamped_transcriber.transcribe_with_confidence(
-                        chunk_full_path.as_posix()
+                    # Get timestamped transcription with speaker tags
+                    timestamped_result = (
+                        timestamped_transcriber.transcribe_with_confidence(
+                            chunk_full_path.as_posix()
+                        )
                     )
-                )
-                # Convert chunk.start from milliseconds to seconds for timing alignment
-                chunk_start_sec = chunk.start / 1000.0
-                transcription_clean = self._add_speaker_tags(
-                    timestamped_result, chunk.speaker_events, chunk_start_sec
-                )
+                    # Convert chunk.start from milliseconds to seconds for timing alignment
+                    chunk_start_sec = chunk.start / 1000.0
+                    transcription_clean = self._add_speaker_tags(
+                        timestamped_result, chunk.speaker_events, chunk_start_sec
+                    )
 
-                log.info(
-                    f"\nTranscription for chunk {chunk.start} - {chunk.end}:\n{transcription}\n"
-                )
-                log.info(f"\nClean transcription:\n{transcription_clean} {timestamped_result['confidence']}\n")
-                processed_chunks.append(
-                    ProcessedAudioChunk(
-                        audio_chunk=chunk,
-                        transcription=transcription["text"],
-                        transcription_conf=transcription["confidence"],
-                        transcription_clean=transcription_clean,
-                        transcription_clean_conf=timestamped_result["confidence"],
+                    log.info(
+                        f"\nTranscription for chunk {chunk.start} - {chunk.end}:\n{transcription}\n"
                     )
-                )
+                    log.info(f"\nClean transcription:\n{transcription_clean} {timestamped_result['confidence']}\n")
+                    processed_chunks.append(
+                        ProcessedAudioChunk(
+                            audio_chunk=chunk,
+                            transcription=transcription["text"],
+                            transcription_conf=transcription["confidence"],
+                            transcription_clean=transcription_clean,
+                            transcription_clean_conf=timestamped_result["confidence"],
+                        )
+                    )
+                except Exception as e:
+                    log.error(f"Failed to transcribe chunk {chunk_full_path}: {e}")
+                    continue
 
             processed_file = ProcessedAudioFile(
                 source_file=audio_file_path.as_posix(),
@@ -324,7 +337,7 @@ class ChunkerWorker:
                 # Continue processing even if database storage fails
 
             log.info(
-                f"Completed: {len(chunks)} chunks in {time.time() - start_time:.1f}s"
+                f"Completed: {len(processed_chunks)} out of {len(chunks)} chunks in {time.time() - start_time:.1f}s"
             )
             return processed_file
 
@@ -755,7 +768,7 @@ def queue_from_file(
     processed_count = 0
     queued_count = 0
 
-    for gcs_mp3_path in gcs_mp3_paths:
+    for gcs_mp3_path in gcs_mp3_paths[0:5000]:
         if audio_store.is_audio_file_processed(gcs_mp3_path):
             log.info(f"Audio file {gcs_mp3_path} has already been processed, skipping")
             processed_count += 1
