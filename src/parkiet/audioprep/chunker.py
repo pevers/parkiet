@@ -647,6 +647,13 @@ def create_chunks(
     for event in events_in_window:
         event_duration = event.end - event.start
 
+        # Skip events that are already longer than the window size
+        if event_duration > window_size_sec:
+            log.warning(
+                f"Skipping event {event.start:.1f}s-{event.end:.1f}s as it's too long ({event_duration:.1f}s > {window_size_sec:.1f}s)"
+            )
+            continue
+
         # Check if adding this event would exceed the window size
         # We need to check both the chunk span
         potential_chunk_events = current_chunk_events + [event]
