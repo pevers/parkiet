@@ -215,8 +215,8 @@ class AudioStore:
                 cursor.execute(
                     """
                     INSERT INTO audio_chunks 
-                    (audio_file_id, chunk_file_path, start_time_ms, end_time_ms, transcription, transcription_clean)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    (audio_file_id, chunk_file_path, start_time_ms, end_time_ms, transcription, transcription_conf, transcription_clean, transcription_clean_conf)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """,
                     (
@@ -225,7 +225,9 @@ class AudioStore:
                         chunk.audio_chunk.start,
                         chunk.audio_chunk.end,
                         chunk.transcription,
+                        chunk.transcription_conf,
                         chunk.transcription_clean,
+                        chunk.transcription_clean_conf,
                     ),
                 )
 

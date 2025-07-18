@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS audio_chunks (
     start_time_ms INTEGER NOT NULL,  -- milliseconds
     end_time_ms INTEGER NOT NULL,    -- milliseconds
     transcription TEXT,
+    transcription_conf FLOAT,
     transcription_clean TEXT,
+    transcription_clean_conf FLOAT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

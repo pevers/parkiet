@@ -24,7 +24,9 @@ class ProcessedAudioChunk(BaseModel):
 
     audio_chunk: AudioChunk
     transcription: str
+    transcription_conf: float
     transcription_clean: str
+    transcription_clean_conf: float
 
 
 class ProcessedAudioFile(BaseModel):

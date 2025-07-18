@@ -2,6 +2,7 @@ import argparse
 import logging
 import random
 from pathlib import Path
+import statistics
 import time
 import torch
 import shutil
@@ -271,7 +272,9 @@ class ChunkerWorker:
                     ProcessedAudioChunk(
                         audio_chunk=chunk,
                         transcription=transcription,
+                        transcription_conf=transcription_conf,
                         transcription_clean=transcription_clean,
+                        transcription_clean_conf=timestamped_result["confidence"],
                     )
                 )
 
