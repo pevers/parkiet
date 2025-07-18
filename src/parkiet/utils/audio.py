@@ -1,6 +1,5 @@
 import subprocess
 from pathlib import Path
-from typing import List
 import concurrent.futures
 import logging
 from parkiet.audioprep.schemas import SpeakerEvent
@@ -99,6 +98,8 @@ def extract_audio_segment(
         str(sample_rate),
         "-ac",
         "1",
+        "-c:a",
+        "pcm_s16le",  # Use 16-bit PCM encoding for WAV
         output_path.as_posix(),
     ]
 
@@ -144,8 +145,48 @@ def find_audio_files(source_folder: Path) -> list[Path]:
     return sorted(audio_files)
 
 
+def convert_to_wav(
+    input_path: Path,
+    output_path: Path,
+    sample_rate: int = 16000,
+    channels: int = 1,
+) -> None:
+    """
+    Convert audio file to WAV format using ffmpeg.
+    
+    Args:
+        input_path: Path to the input audio file
+        output_path: Path for the output WAV file
+        sample_rate: Target sample rate in Hz (default: 16000)
+        channels: Number of audio channels (default: 1 for mono)
+    """
+    log.info(f"Converting {input_path} to WAV format at {output_path}")
+    
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-y",  # Overwrite output file if it exists
+        "-i", input_path.as_posix(),
+        "-ar", str(sample_rate),  # Set sample rate
+        "-ac", str(channels),     # Set number of channels
+        "-c:a", "pcm_s16le",      # Use 16-bit PCM encoding
+        output_path.as_posix(),
+    ]
+    
+    try:
+        subprocess.run(
+            ffmpeg_cmd, 
+            check=True, 
+            stdout=subprocess.DEVNULL, 
+            stderr=subprocess.DEVNULL
+        )
+        log.info(f"Successfully converted {input_path} to {output_path}")
+    except subprocess.CalledProcessError as e:
+        log.error(f"Failed to convert {input_path} to WAV: {e}")
+        raise
+
+
 def find_natural_break_after_time(
-    speaker_events: List[SpeakerEvent], target_time_sec: float
+    speaker_events: list[SpeakerEvent], target_time_sec: float
 ) -> float:
     """
     Find a natural break (end of speaker segment) after target_time_sec.

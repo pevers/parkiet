@@ -27,6 +27,7 @@ from parkiet.utils.audio import (
     extract_audio_segments_parallel,
     find_natural_break_after_time,
     validate_audio_file,
+    convert_to_wav,
 )
 from parkiet.audioprep.speaker_extractor import SpeakerExtractor
 from parkiet.audioprep.transcriber import Transcriber, WhisperTimestampedTranscriber
@@ -150,9 +151,24 @@ class ChunkerWorker:
                     log.error(f"Audio file {gcs_audio_path} is corrupted or invalid, skipping")
                     return False
 
-                # Process the audio file
+                # Convert to WAV format for consistent processing
+                wav_filename = f"{Path(gcs_filename).stem}.wav"
+                wav_audio_path = job_output_dir / wav_filename
+                
+                try:
+                    convert_to_wav(local_audio_path, wav_audio_path)
+                    log.info(f"Converted {gcs_filename} to WAV format: {wav_filename}")
+                    
+                    # Clean up the original downloaded file to save disk space
+                    local_audio_path.unlink()
+                    log.info(f"Cleaned up original downloaded file: {gcs_filename}")
+                except Exception as e:
+                    log.error(f"Failed to convert {gcs_filename} to WAV format: {e}")
+                    return False
+
+                # Process the audio file (using WAV format)
                 processed_file = self.process_single_audio_file(
-                    local_audio_path,
+                    wav_audio_path,
                     job_output_dir,
                     gcs_audio_path,
                     window_size_sec,
@@ -273,7 +289,7 @@ class ChunkerWorker:
                 log.info(
                     f"\nTranscription for chunk {chunk.start} - {chunk.end}:\n{transcription}\n"
                 )
-                log.info(f"\nClean transcription:\n{transcription_clean}\n")
+                log.info(f"\nClean transcription:\n{transcription_clean} {timestamped_result['confidence']}\n")
                 processed_chunks.append(
                     ProcessedAudioChunk(
                         audio_chunk=chunk,
@@ -565,7 +581,7 @@ def create_chunks(
                 continue
 
             chunk_id = str(ULID())
-            chunk_filename = f"{chunk_id}.mp3"
+            chunk_filename = f"{chunk_id}.wav"
             chunk_path = output_dir / chunk_filename
 
             # Add task to the list for parallel extraction
@@ -620,7 +636,7 @@ def create_chunks(
             return chunks, audio_duration, (actual_start, actual_end)
 
         chunk_id = str(ULID())
-        chunk_filename = f"{chunk_id}.mp3"
+        chunk_filename = f"{chunk_id}.wav"
         chunk_path = output_dir / chunk_filename
 
         # Add task to the list for parallel extraction
