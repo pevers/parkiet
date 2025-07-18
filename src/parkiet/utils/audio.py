@@ -1,7 +1,11 @@
 import subprocess
 from pathlib import Path
 from typing import List
+import concurrent.futures
+import logging
 from parkiet.audioprep.schemas import SpeakerEvent
+
+log = logging.getLogger(__name__)
 
 
 def get_audio_duration(audio_path: Path) -> float:
@@ -29,6 +33,9 @@ def extract_audio_segment(
     sample_rate: int = 16000,
 ) -> None:
     """Extract audio segment using ffmpeg."""
+    log.info(
+        f"Extracting audio segment from {original_audio_path} from {start_sec}s to {end_sec}s to {output_path}"
+    )
     duration_sec = end_sec - start_sec
 
     ffmpeg_cmd = [
@@ -50,6 +57,22 @@ def extract_audio_segment(
     subprocess.run(
         ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
+
+
+def extract_audio_segments_parallel(
+    chunk_tasks: list[tuple[Path, float, float, Path]],
+    max_workers: int = 4,
+) -> None:
+    """
+    Extract multiple audio segments in parallel using ThreadPoolExecutor.
+
+    Args:
+        chunk_tasks: List of tuples (original_audio_path, start_sec, end_sec, output_path)
+        max_workers: Maximum number of parallel workers (default: 4)
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks and wait for completion
+        list(executor.map(lambda task: extract_audio_segment(*task), chunk_tasks))
 
 
 def find_audio_files(source_folder: Path) -> list[Path]:

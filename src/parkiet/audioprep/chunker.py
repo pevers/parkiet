@@ -7,6 +7,7 @@ import torch
 import shutil
 import warnings
 from dotenv import load_dotenv
+import concurrent.futures
 
 warnings.filterwarnings(
     "ignore", message="The MPEG_LAYER_III subtype is unknown to TorchAudio"
@@ -22,6 +23,7 @@ from parkiet.audioprep.schemas import (
 from parkiet.utils.audio import (
     get_audio_duration,
     extract_audio_segment,
+    extract_audio_segments_parallel,
     find_natural_break_after_time,
 )
 from parkiet.audioprep.speaker_extractor import SpeakerExtractor
@@ -46,6 +48,7 @@ class ChunkerWorker:
         whisper_checkpoint_path: str = "pevers/whisperd-nl",
         temp_dir: str = "/tmp/parkiet_chunks",
         gpu_id: int = 0,
+        max_workers: int = 4,
     ):
         """
         Initialize the chunker worker.
@@ -55,8 +58,10 @@ class ChunkerWorker:
             whisper_checkpoint_path: Path to Whisper checkpoint
             temp_dir: Temporary directory for processing chunks
             gpu_id: GPU ID to use for processing (default: 0)
+            max_workers: Maximum number of parallel workers for audio extraction (default: 4)
         """
         self.queue_name = queue_name
+        self.max_workers = max_workers
         self.temp_dir = Path(temp_dir)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -237,6 +242,7 @@ class ChunkerWorker:
                 window_size_sec,
                 skip_start_sec,
                 skip_end_sec,
+                max_workers=self.max_workers,
             )
 
             log.info(f"Creating transcription for {len(chunks)} chunks")
@@ -464,6 +470,7 @@ def create_chunks(
     window_size_sec: float = 30.0,
     skip_start_sec: float = 100.0,
     skip_end_sec: float = 100.0,
+    max_workers: int = 4,
 ) -> tuple[list[AudioChunk], float, tuple[float, float]]:
     """
     Create audio chunks from speaker events using a sliding window approach.
@@ -476,6 +483,7 @@ def create_chunks(
         skip_start_sec: Time to skip from start (will find natural break after this)
         skip_end_sec: Time to skip from end (will find natural break before this)
         gcs_audio_path: GCS path to the original audio file (used for chunk GCS paths)
+        max_workers: Maximum number of parallel workers for audio extraction (default: 4)
 
     Returns:
         Tuple of (chunks, audio_duration, processing_window)
@@ -517,6 +525,7 @@ def create_chunks(
         return [], audio_duration, (actual_start, actual_end)
 
     chunks = []
+    chunk_tasks = []  # List to store audio extraction tasks for parallel processing
     current_chunk_events = []
     current_chunk_duration = 0.0
 
@@ -539,8 +548,9 @@ def create_chunks(
             chunk_filename = f"{chunk_id}.mp3"
             chunk_path = output_dir / chunk_filename
 
-            extract_audio_segment(
-                original_audio_path, chunk_start, chunk_end, chunk_path
+            # Add task to the list for parallel extraction
+            chunk_tasks.append(
+                (original_audio_path, chunk_start, chunk_end, chunk_path)
             )
 
             # Create GCS path for the chunk
@@ -586,7 +596,8 @@ def create_chunks(
         chunk_filename = f"{chunk_id}.mp3"
         chunk_path = output_dir / chunk_filename
 
-        extract_audio_segment(original_audio_path, chunk_start, chunk_end, chunk_path)
+        # Add task to the list for parallel extraction
+        chunk_tasks.append((original_audio_path, chunk_start, chunk_end, chunk_path))
 
         # Create GCS path for the chunk
         original_file_path = Path(gcs_audio_path)
@@ -606,6 +617,14 @@ def create_chunks(
             f"Created final chunk {len(chunks)}: {chunk_start:.1f}s-{chunk_end:.1f}s "
             f"({len(current_chunk_events)} events, {current_chunk_duration:.1f}s)"
         )
+
+    # Extract all audio segments in parallel
+    if chunk_tasks:
+        log.info(
+            f"Extracting {len(chunk_tasks)} audio chunks in parallel with {max_workers} workers"
+        )
+        extract_audio_segments_parallel(chunk_tasks, max_workers)
+        log.info("Completed parallel audio extraction")
 
     return chunks, audio_duration, (actual_start, actual_end)
 
@@ -761,6 +780,13 @@ Examples:
         default=0,
         help="GPU ID to use for processing (default: 0)",
     )
+    worker_parser.add_argument(
+        "--max-workers",
+        "-w",
+        type=int,
+        default=4,
+        help="Maximum number of parallel workers for audio extraction (default: 4)",
+    )
 
     # Queue command
     queue_parser = subparsers.add_parser("queue", help="Queue single GCS audio file")
@@ -832,6 +858,7 @@ Examples:
             whisper_checkpoint_path=args.whisper_checkpoint_path,
             temp_dir=args.temp_dir,
             gpu_id=args.gpu_id,
+            max_workers=args.max_workers,
         )
         worker.start_listening()
 
