@@ -47,7 +47,7 @@ class RedisConnection:
             job_data: Job data as dictionary
         """
         self.redis_client.lpush(queue_name, json.dumps(job_data))
-        log.info(f"Pushed job to queue {queue_name}: {job_data}")
+        log.info(f"Pushed job to queue {queue_name}: {job_data['audio_file_path']}")
 
     def pop_job(self, queue_name: str, timeout: int = 0) -> dict | None:
         """

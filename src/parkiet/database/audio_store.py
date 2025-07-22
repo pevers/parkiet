@@ -1,5 +1,4 @@
 import logging
-import numpy as np
 from parkiet.audioprep.schemas import (
     ProcessedAudioFile,
     ProcessedAudioChunk,
@@ -17,17 +16,8 @@ class AudioStore:
         self.similarity_threshold = similarity_threshold
         self.db = db_connection or get_db_connection()
 
-    def _cosine_similarity(
-        self, embedding1: np.ndarray, embedding2: np.ndarray
-    ) -> float:
-        dot_product = np.dot(embedding1, embedding2)
-        norm1 = np.linalg.norm(embedding1)
-        norm2 = np.linalg.norm(embedding2)
-        return dot_product / (norm1 * norm2)
-
-    def _find_similar_speaker(self, embedding: np.ndarray) -> int | None:
+    def _find_similar_speaker(self, embedding: list[float]) -> int | None:
         with self.db.get_cursor() as cursor:
-            embedding_list = embedding.tolist()
             cursor.execute(
                 """
                 SELECT id, 1 - (embedding <=> %s::vector) as similarity
@@ -37,10 +27,10 @@ class AudioStore:
                 LIMIT 1
             """,
                 (
-                    embedding_list,
-                    embedding_list,
+                    embedding,
+                    embedding,
                     self.similarity_threshold,
-                    embedding_list,
+                    embedding,
                 ),
             )
             result = cursor.fetchone()
@@ -110,7 +100,7 @@ class AudioStore:
             return False
 
     def store_speaker_embeddings(
-        self, speaker_embeddings: dict[str, np.ndarray]
+        self, speaker_embeddings: dict[str, list[float]]
     ) -> dict[str, int]:
         """
         Store speaker embeddings and return mapping of speaker labels to speaker IDs.
@@ -136,16 +126,13 @@ class AudioStore:
                         f"Reusing speaker ID {similar_speaker_id} for label {speaker_label}"
                     )
                 else:
-                    # Insert new speaker embedding
-                    embedding_list = embedding.tolist()
-
                     cursor.execute(
                         """
                         INSERT INTO speakers (embedding)
                         VALUES (%s::vector)
                         RETURNING id
                     """,
-                        (embedding_list,),
+                        (embedding,),
                     )
 
                     speaker_id = cursor.fetchone()["id"]  # type: ignore
@@ -249,7 +236,7 @@ class AudioStore:
     def store_processed_file(
         self,
         processed_file: ProcessedAudioFile,
-        speaker_embeddings: dict[str, np.ndarray] | None = None,
+        speaker_embeddings: dict[str, list[float]] | None = None,
     ) -> int:
         """
         Store all data from a processed audio file.
