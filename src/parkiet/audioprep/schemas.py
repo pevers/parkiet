@@ -33,7 +33,6 @@ class ProcessedAudioFile(BaseModel):
     """Represents an audio file with processed chunks."""
 
     source_file: str
-    output_directory: str
     gcs_audio_path: str
     audio_duration_sec: float
     chunks: list[ProcessedAudioChunk]

@@ -16,6 +16,7 @@ load_dotenv()
 from parkiet.audioprep.schemas import (
     AudioChunk,
     SpeakerEvent,
+    ProcessedAudioFile,
 )
 from parkiet.utils.audio import (
     get_audio_duration,
@@ -77,7 +78,7 @@ class ChunkExtractor:
             log.info(f"Downloaded {gcs_path} to {local_path}")
             return True
         except Exception as e:
-            log.error(f"Failed to download {gcs_path} from GCS: {e}")
+            log.exception(f"Failed to download {gcs_path} from GCS")
             return False
 
     def extract_chunks(self, job_data: dict) -> bool:
@@ -87,7 +88,7 @@ class ChunkExtractor:
             gcs_audio_path = job_data["audio_file_path"]
             window_size_sec = job_data.get("window_size_sec", 30.0)
             skip_start_sec = job_data.get("skip_start_sec", 120.0)
-            skip_end_sec = job_data.get("skip_end_sec", 180.0)
+            skip_end_sec = job_data.get("skip_end_sec", 120.0)
 
             log.info(f"Extracting chunks from: {gcs_audio_path}")
 
@@ -156,6 +157,24 @@ class ChunkExtractor:
                 for speaker, embedding in speaker_embeddings.items():
                     serializable_embeddings[speaker] = embedding.tolist()
 
+                # Store audio file in database first
+                processed_file = ProcessedAudioFile(
+                    source_file=gcs_audio_path,
+                    gcs_audio_path=gcs_audio_path,
+                    audio_duration_sec=audio_duration,
+                    chunks=[],  # Empty for now, will be filled by transcriber
+                    success=True,
+                    processing_window={
+                        "start": processing_window[0],
+                        "end": processing_window[1],
+                    },
+                )
+
+                audio_file_id = self.audio_store.store_processed_file(
+                    processed_file, serializable_embeddings
+                )
+                log.info(f"Stored audio file in database with ID: {audio_file_id}")
+
                 # Queue chunks for transcription
                 for chunk in chunks:
                     chunk_message = {
@@ -163,6 +182,7 @@ class ChunkExtractor:
                         "chunk_id": chunk.file_path,
                         "chunk_path": str(job_chunks_dir / chunk.file_path),
                         "gcs_audio_path": gcs_audio_path,
+                        "audio_file_id": audio_file_id,
                         "chunk_data": chunk.model_dump(),
                         "speaker_embeddings": serializable_embeddings,
                         "timestamp": time.time(),
@@ -179,7 +199,7 @@ class ChunkExtractor:
                     log.info(f"Cleaned up temp directory: {job_temp_dir}")
 
         except Exception as e:
-            log.error(f"Error extracting chunks: {e}")
+            log.exception("Error extracting chunks")
             return False
 
     def _create_chunks(
@@ -354,7 +374,7 @@ class ChunkExtractor:
                 log.info("Shutting down chunk extractor")
                 break
             except Exception as e:
-                log.error(f"Error in extractor loop: {e}")
+                log.exception("Error in extractor loop")
                 time.sleep(5)
 
 

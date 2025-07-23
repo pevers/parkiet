@@ -135,40 +135,31 @@ class BatchTranscriber:
             # Store processed chunks in database
             if processed_chunks:
                 try:
-                    # Group by job_id for database storage
+                    # Group by audio_file_id for database storage
                     jobs_data = {}
                     for i, chunk_msg in enumerate(valid_chunks):
                         if i < len(processed_chunks):
-                            job_id = chunk_msg["job_id"]
-                            if job_id not in jobs_data:
-                                jobs_data[job_id] = {
-                                    "gcs_audio_path": chunk_msg["gcs_audio_path"],
+                            audio_file_id = chunk_msg["audio_file_id"]
+                            if audio_file_id not in jobs_data:
+                                jobs_data[audio_file_id] = {
                                     "speaker_embeddings": chunk_msg[
                                         "speaker_embeddings"
                                     ],
                                     "chunks": [],
                                 }
-                            jobs_data[job_id]["chunks"].append(processed_chunks[i])
+                            jobs_data[audio_file_id]["chunks"].append(
+                                processed_chunks[i]
+                            )
 
-                    # Store each job's data
-                    for job_id, job_data in jobs_data.items():
-                        # Create minimal ProcessedAudioFile for storage
-                        from parkiet.audioprep.schemas import ProcessedAudioFile
-
-                        processed_file = ProcessedAudioFile(
-                            source_file=job_data["gcs_audio_path"],
-                            output_directory="",  # Not used in batch mode
-                            gcs_audio_path=job_data["gcs_audio_path"],
-                            audio_duration_sec=0.0,  # Will be calculated if needed
-                            chunks=job_data["chunks"],
-                            success=True,
-                        )
-
-                        audio_file_id = self.audio_store.store_processed_file(
-                            processed_file, job_data["speaker_embeddings"]
+                    # Add chunks to each audio file
+                    for audio_file_id, job_data in jobs_data.items():
+                        chunk_ids = self.audio_store.add_chunks_to_audio_file(
+                            audio_file_id,
+                            job_data["chunks"],
+                            job_data["speaker_embeddings"],
                         )
                         log.info(
-                            f"Stored job {job_id} in database with ID: {audio_file_id}"
+                            f"Added {len(chunk_ids)} chunks to audio file ID: {audio_file_id}"
                         )
 
                 except Exception as e:

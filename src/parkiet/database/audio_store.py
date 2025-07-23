@@ -254,20 +254,57 @@ class AudioStore:
         if speaker_embeddings:
             speaker_id_map = self.store_speaker_embeddings(speaker_embeddings)
 
+        # Store chunks if any exist
+        if processed_file.chunks:
+            chunk_ids = self.store_audio_chunks(audio_file_id, processed_file.chunks)
+
+            # Store events for each chunk
+            for i, chunk in enumerate(processed_file.chunks):
+                chunk_events = chunk.audio_chunk.speaker_events
+                self.store_audio_events(
+                    audio_file_id, chunk_ids[i], chunk_events, speaker_id_map
+                )
+
+        log.info(
+            f"Successfully stored audio file {processed_file.source_file} with ID: {audio_file_id}"
+        )
+        return audio_file_id
+
+    def add_chunks_to_audio_file(
+        self,
+        audio_file_id: int,
+        processed_chunks: list[ProcessedAudioChunk],
+        speaker_embeddings: dict[str, list[float]] | None = None,
+    ) -> list[int]:
+        """
+        Add chunks to an existing audio file.
+
+        Args:
+            audio_file_id: ID of the existing audio file
+            processed_chunks: List of processed audio chunks to add
+            speaker_embeddings: Optional speaker embeddings dictionary
+
+        Returns:
+            chunk_ids: List of chunk IDs that were inserted
+        """
+        speaker_id_map = {}
+        if speaker_embeddings:
+            speaker_id_map = self.store_speaker_embeddings(speaker_embeddings)
+
         # Store chunks
-        chunk_ids = self.store_audio_chunks(audio_file_id, processed_file.chunks)
+        chunk_ids = self.store_audio_chunks(audio_file_id, processed_chunks)
 
         # Store events for each chunk
-        for i, chunk in enumerate(processed_file.chunks):
+        for i, chunk in enumerate(processed_chunks):
             chunk_events = chunk.audio_chunk.speaker_events
             self.store_audio_events(
                 audio_file_id, chunk_ids[i], chunk_events, speaker_id_map
             )
 
         log.info(
-            f"Successfully stored all data for audio file {processed_file.source_file}"
+            f"Successfully added {len(processed_chunks)} chunks to audio file {audio_file_id}"
         )
-        return audio_file_id
+        return chunk_ids
 
     def get_speaker_duration_in_chunk(self, chunk_id: int, speaker_id: int) -> float:
         """

@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS audio_files (
 
 CREATE TABLE IF NOT EXISTS audio_chunks (
     id SERIAL PRIMARY KEY,
-    audio_file_id INTEGER NOT NULL REFERENCES audio_files(id),
+    audio_file_id INTEGER NOT NULL REFERENCES audio_files(id) ON DELETE CASCADE,
     chunk_file_path TEXT NOT NULL,
     start_time_ms INTEGER NOT NULL,  -- milliseconds
     end_time_ms INTEGER NOT NULL,    -- milliseconds
@@ -35,8 +35,8 @@ CREATE TABLE IF NOT EXISTS audio_chunks (
 
 CREATE TABLE IF NOT EXISTS audio_events (
     id SERIAL PRIMARY KEY,
-    audio_file_id INTEGER NOT NULL REFERENCES audio_files(id),
-    chunk_id INTEGER NOT NULL REFERENCES audio_chunks(id),
+    audio_file_id INTEGER NOT NULL REFERENCES audio_files(id) ON DELETE CASCADE,
+    chunk_id INTEGER NOT NULL REFERENCES audio_chunks(id) ON DELETE CASCADE,
     speaker_id INTEGER REFERENCES speakers(id),
     start_time_sec FLOAT NOT NULL,
     end_time_sec FLOAT NOT NULL,
