@@ -3,6 +3,7 @@ import logging
 import time
 import torch
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 from dotenv import load_dotenv
@@ -13,6 +14,7 @@ load_dotenv()
 from parkiet.audioprep.schemas import AudioChunk, ProcessedAudioChunk
 from parkiet.database.audio_store import AudioStore
 from parkiet.database.redis_connection import get_redis_connection
+from parkiet.storage.gcs_client import get_gcs_client
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -32,15 +34,27 @@ class BatchTranscriber:
         batch_size: int = 8,
         inference_batch_size: int = 4,
         max_chunk_duration: float = 30.0,
+        chunks_dir: str = "data/chunks",
+        upload_to_gcs: bool = False,
     ):
         self.input_queue_name = input_queue_name
         self.batch_size = batch_size
         self.inference_batch_size = inference_batch_size
         self.max_chunk_duration = max_chunk_duration
+        self.chunks_dir = Path(chunks_dir)
+        self.upload_to_gcs = upload_to_gcs
+
+        # Only create local directory if not uploading to GCS
+        if not self.upload_to_gcs:
+            self.chunks_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize services
         self.redis_client = get_redis_connection()
         self.audio_store = AudioStore()
+
+        # Initialize GCS client if needed
+        if self.upload_to_gcs:
+            self.gcs_client = get_gcs_client()
 
         # Initialize device configuration
         if torch.cuda.is_available():
@@ -166,11 +180,89 @@ class BatchTranscriber:
                     log.error(f"Failed to store processed chunks in database: {e}")
 
             log.info(f"Successfully processed batch of {len(processed_chunks)} chunks")
+
+            # Move processed chunks to designated folder for later GCS upload
+            self._move_chunks_to_upload_folder(valid_chunks)
+
             return True
 
         except Exception as e:
             log.error(f"Error processing chunk batch: {e}")
             return False
+
+    def _move_chunks_to_upload_folder(self, chunk_messages: list[dict]) -> None:
+        """Move processed chunks to the designated folder for later GCS upload or upload directly to GCS."""
+        for chunk_msg in chunk_messages:
+            chunk_path = Path(chunk_msg["chunk_path"])
+            if not chunk_path.exists():
+                log.warning(f"Chunk file not found for processing: {chunk_path}")
+                continue
+
+            gcs_audio_path = chunk_msg["gcs_audio_path"]
+            original_file_path = Path(gcs_audio_path)
+            parent_dir = original_file_path.parent.name
+            original_file_name = original_file_path.stem
+            chunk_filename = chunk_path.name
+
+            if self.upload_to_gcs:
+                # Upload directly to GCS
+                self._upload_chunk_to_gcs(
+                    chunk_path, parent_dir, original_file_name, chunk_filename
+                )
+            else:
+                # Move to local directory structure
+                self._move_chunk_locally(
+                    chunk_path, parent_dir, original_file_name, chunk_filename
+                )
+
+    def _upload_chunk_to_gcs(
+        self,
+        chunk_path: Path,
+        parent_dir: str,
+        original_file_name: str,
+        chunk_filename: str,
+    ) -> None:
+        """Upload a chunk directly to GCS."""
+        # Create GCS path: chunks/{parent_dir}/{original_file_name}/{chunk_filename}
+        gcs_path = f"chunks/{parent_dir}/{original_file_name}/{chunk_filename}"
+
+        # Check if file already exists in GCS
+        if self.gcs_client.file_exists(gcs_path):
+            log.warning(f"Chunk {chunk_filename} already exists in GCS at {gcs_path}")
+            # Remove the local file since it's already in GCS
+            chunk_path.unlink()
+            return
+
+        # Upload to GCS
+        if self.gcs_client.upload_file(chunk_path, gcs_path):
+            log.info(f"Uploaded chunk {chunk_filename} to GCS: {gcs_path}")
+            # Remove local file after successful upload
+            chunk_path.unlink()
+        else:
+            log.error(f"Failed to upload chunk {chunk_filename} to GCS")
+
+    def _move_chunk_locally(
+        self,
+        chunk_path: Path,
+        parent_dir: str,
+        original_file_name: str,
+        chunk_filename: str,
+    ) -> None:
+        """Move a chunk to the local directory structure."""
+        # Create subdirectory structure: data/chunks/{parent_dir}/{original_file_name}/
+        upload_subdir = self.chunks_dir / parent_dir / original_file_name
+        upload_subdir.mkdir(parents=True, exist_ok=True)
+
+        # Move the chunk file
+        destination_path = upload_subdir / chunk_filename
+
+        if not destination_path.exists():
+            shutil.move(str(chunk_path), str(destination_path))
+            log.info(f"Moved chunk {chunk_filename} to {destination_path}")
+        else:
+            log.warning(f"Chunk {chunk_filename} already exists at {destination_path}")
+            # Remove the original if it already exists in destination
+            chunk_path.unlink()
 
     def collect_batch(self) -> list[dict]:
         """Collect chunks for a batch."""
@@ -376,6 +468,16 @@ def main():
         default=30.0,
         help="Maximum chunk duration in seconds",
     )
+    parser.add_argument(
+        "--chunks-dir",
+        default="data/chunks",
+        help="Directory for storing processed chunks for GCS upload (only used when --upload-to-gcs is False)",
+    )
+    parser.add_argument(
+        "--upload-to-gcs",
+        action="store_true",
+        help="Upload processed chunks directly to Google Cloud Storage instead of storing locally",
+    )
 
     args = parser.parse_args()
 
@@ -387,6 +489,8 @@ def main():
         batch_size=args.batch_size,
         inference_batch_size=args.inference_batch_size,
         max_chunk_duration=args.max_chunk_duration,
+        chunks_dir=args.chunks_dir,
+        upload_to_gcs=args.upload_to_gcs,
     )
     transcriber.start_listening()
 
