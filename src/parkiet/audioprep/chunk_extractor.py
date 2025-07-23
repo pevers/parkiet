@@ -87,8 +87,8 @@ class ChunkExtractor:
             # Extract job parameters
             gcs_audio_path = job_data["audio_file_path"]
             window_size_sec = job_data.get("window_size_sec", 30.0)
-            skip_start_sec = job_data.get("skip_start_sec", 120.0)
-            skip_end_sec = job_data.get("skip_end_sec", 120.0)
+            skip_start_sec = job_data.get("skip_start_sec", 80.0)
+            skip_end_sec = job_data.get("skip_end_sec", 80.0)
 
             log.info(f"Extracting chunks from: {gcs_audio_path}")
 
