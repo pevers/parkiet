@@ -470,13 +470,18 @@ def launch_transcriber_process(gpu_id, args):
 
 
 def launch_multi_gpu_processes(args):
-    """Launch transcriber processes on all available GPUs."""
+    """Launch transcriber processes on available GPUs (up to max_gpus limit)."""
     gpu_ids = get_available_gpus()
 
     if not gpu_ids:
         log.info("No GPUs available, launching single CPU process")
         launch_transcriber_process(0, args)
         return
+
+    # Limit GPUs if max_gpus is specified
+    if hasattr(args, "max_gpus") and args.max_gpus > 0:
+        gpu_ids = gpu_ids[: args.max_gpus]
+        log.info(f"Limited to {len(gpu_ids)} GPUs (max_gpus={args.max_gpus})")
 
     processes = []
 
@@ -573,6 +578,12 @@ def main():
         "--multi-gpu",
         action="store_true",
         help="Launch one process per available GPU automatically",
+    )
+    parser.add_argument(
+        "--max-gpus",
+        type=int,
+        default=0,
+        help="Maximum number of GPUs to use (0 = use all available)",
     )
 
     args = parser.parse_args()
