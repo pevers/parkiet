@@ -4,6 +4,9 @@ import time
 import torch
 import re
 import shutil
+import multiprocessing
+import signal
+import sys
 from pathlib import Path
 from typing import Any
 from dotenv import load_dotenv
@@ -230,16 +233,28 @@ class BatchTranscriber:
         if self.gcs_client.file_exists(gcs_path):
             log.warning(f"Chunk {chunk_filename} already exists in GCS at {gcs_path}")
             # Remove the local file since it's already in GCS
-            chunk_path.unlink()
+            if chunk_path.exists():
+                chunk_path.unlink()
+                log.info(
+                    f"Removed local chunk {chunk_filename} (already exists in GCS)"
+                )
             return
 
         # Upload to GCS
         if self.gcs_client.upload_file(chunk_path, gcs_path):
             log.info(f"Uploaded chunk {chunk_filename} to GCS: {gcs_path}")
             # Remove local file after successful upload
-            chunk_path.unlink()
+            if chunk_path.exists():
+                chunk_path.unlink()
+                log.info(
+                    f"Removed local chunk {chunk_filename} after successful upload"
+                )
         else:
             log.error(f"Failed to upload chunk {chunk_filename} to GCS")
+            # Remove local file even on upload failure to prevent disk space accumulation
+            if chunk_path.exists():
+                chunk_path.unlink()
+                log.info(f"Removed local chunk {chunk_filename} after upload failure")
 
     def _move_chunk_locally(
         self,
@@ -425,6 +440,82 @@ class WhisperTranscriber:
         return results
 
 
+def get_available_gpus():
+    """Get list of available GPU IDs."""
+    if not torch.cuda.is_available():
+        log.warning("CUDA not available, falling back to CPU")
+        return []
+
+    gpu_count = torch.cuda.device_count()
+    log.info(f"Found {gpu_count} GPU(s)")
+    return list(range(gpu_count))
+
+
+def launch_transcriber_process(gpu_id, args):
+    """Launch a single transcriber process for a specific GPU."""
+    log.info(f"Starting transcriber process on GPU {gpu_id}")
+
+    transcriber = BatchTranscriber(
+        input_queue_name=args.input_queue,
+        whisper_checkpoint_path=args.whisper_checkpoint,
+        whisper_clean_checkpoint_path=args.whisper_clean_checkpoint,
+        gpu_id=gpu_id,
+        batch_size=args.batch_size,
+        inference_batch_size=args.inference_batch_size,
+        max_chunk_duration=args.max_chunk_duration,
+        chunks_dir=args.chunks_dir,
+        upload_to_gcs=args.upload_to_gcs,
+    )
+    transcriber.start_listening()
+
+
+def launch_multi_gpu_processes(args):
+    """Launch transcriber processes on all available GPUs."""
+    gpu_ids = get_available_gpus()
+
+    if not gpu_ids:
+        log.info("No GPUs available, launching single CPU process")
+        launch_transcriber_process(0, args)
+        return
+
+    processes = []
+
+    def signal_handler(signum, frame):
+        log.info("Received interrupt signal, shutting down all processes...")
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+        for process in processes:
+            process.join(timeout=5)
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    try:
+        for gpu_id in gpu_ids:
+            process = multiprocessing.Process(
+                target=launch_transcriber_process,
+                args=(gpu_id, args),
+                name=f"transcriber-gpu-{gpu_id}",
+            )
+            process.start()
+            processes.append(process)
+            log.info(f"Launched process {process.pid} for GPU {gpu_id}")
+
+        # Wait for all processes to complete
+        for process in processes:
+            process.join()
+
+    except Exception as e:
+        log.error(f"Error in multi-GPU launcher: {e}")
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+        for process in processes:
+            process.join(timeout=5)
+
+
 def main():
     """Main function for batch transcriber."""
     parser = argparse.ArgumentParser(description="Batch audio transcriber")
@@ -478,21 +569,29 @@ def main():
         action="store_true",
         help="Upload processed chunks directly to Google Cloud Storage instead of storing locally",
     )
+    parser.add_argument(
+        "--multi-gpu",
+        action="store_true",
+        help="Launch one process per available GPU automatically",
+    )
 
     args = parser.parse_args()
 
-    transcriber = BatchTranscriber(
-        input_queue_name=args.input_queue,
-        whisper_checkpoint_path=args.whisper_checkpoint,
-        whisper_clean_checkpoint_path=args.whisper_clean_checkpoint,
-        gpu_id=args.gpu_id,
-        batch_size=args.batch_size,
-        inference_batch_size=args.inference_batch_size,
-        max_chunk_duration=args.max_chunk_duration,
-        chunks_dir=args.chunks_dir,
-        upload_to_gcs=args.upload_to_gcs,
-    )
-    transcriber.start_listening()
+    if args.multi_gpu:
+        launch_multi_gpu_processes(args)
+    else:
+        transcriber = BatchTranscriber(
+            input_queue_name=args.input_queue,
+            whisper_checkpoint_path=args.whisper_checkpoint,
+            whisper_clean_checkpoint_path=args.whisper_clean_checkpoint,
+            gpu_id=args.gpu_id,
+            batch_size=args.batch_size,
+            inference_batch_size=args.inference_batch_size,
+            max_chunk_duration=args.max_chunk_duration,
+            chunks_dir=args.chunks_dir,
+            upload_to_gcs=args.upload_to_gcs,
+        )
+        transcriber.start_listening()
 
 
 if __name__ == "__main__":
