@@ -471,6 +471,9 @@ def launch_transcriber_process(gpu_id, args):
 
 def launch_multi_gpu_processes(args):
     """Launch transcriber processes on available GPUs (up to max_gpus limit)."""
+    # Set multiprocessing start method to 'spawn' for CUDA compatibility
+    multiprocessing.set_start_method('spawn', force=True)
+    
     gpu_ids = get_available_gpus()
 
     if not gpu_ids:
