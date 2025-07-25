@@ -408,7 +408,7 @@ class WhisperTranscriber:
                     num_beams=3,  # Reduced beams for batch processing
                     return_dict_in_generate=True,
                 )
-                print(f"Generation time: {time.time() - ts}")
+                log.info(f"Generation time: {time.time() - ts}")
                 ts = time.time()
                 # Calculate confidence scores
                 logp = self.model.compute_transition_scores(
@@ -421,7 +421,7 @@ class WhisperTranscriber:
                 transcriptions = self.processor.batch_decode(
                     generation_result.sequences, skip_special_tokens=False
                 )
-                print(f"Processor time: {time.time() - ts}")
+                log.info(f"Processor time: {time.time() - ts}")
                 ts = time.time()
 
                 # Process results
@@ -450,7 +450,7 @@ class WhisperTranscriber:
                 for _ in mini_batch:
                     results.append({"text": "", "confidence": 0.0})
 
-        print(f"Total time: {time.time() - ts}")
+        log.info(f"Total time: {time.time() - ts}")
 
         return results
 
