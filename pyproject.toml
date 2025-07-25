@@ -3,7 +3,7 @@ name = "parkiet"
 version = "0.1.0"
 description = "Parkiet is a fine-tuned version of Parakeet on Dutch audio data"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "descript-audio-codec>=1.0.0",
     "numba==0.61.2", # Force version for transitive dependency in descript-audio-codec
@@ -12,7 +12,7 @@ dependencies = [
     "numpy>=2.2.4",
     "pydantic>=2.11.3",
     "soundfile>=0.13.1",
-    "transformers>=4.52.3",
+    "transformers>=4.53.3",
     "librosa>=0.11.0",
     "pyannote.audio>=3.1.1",
     "pyarrow>=20.0.0",
@@ -24,8 +24,7 @@ dependencies = [
     "redis>=6.2.0",
     "google-cloud-storage>=3.2.0",
     "python-dotenv>=1.1.1",
-    "whisper-timestamped>=1.15.8",
-    "psutil>=7.0.0",
+    "psutil>=7.0.0"
 ]
 
 [project.optional-dependencies]
@@ -64,7 +63,8 @@ dev-dependencies = [
 # Install latest to support Blackwell chipset
 override-dependencies = [
   "torch>2.6",
-  "torchaudio>2.6"
+  "torchaudio>2.6",
+  "protobuf>=3.20.1"
 ]
 
 [tool.pytest.ini_options]

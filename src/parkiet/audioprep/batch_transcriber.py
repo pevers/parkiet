@@ -8,7 +8,6 @@ import multiprocessing
 import signal
 import sys
 from pathlib import Path
-from typing import Any
 from dotenv import load_dotenv
 from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
 import librosa
@@ -39,6 +38,7 @@ class BatchTranscriber:
         max_chunk_duration: float = 30.0,
         chunks_dir: str = "data/chunks",
         upload_to_gcs: bool = False,
+        dtype: torch.dtype = torch.float16,
     ):
         self.input_queue_name = input_queue_name
         self.batch_size = batch_size
@@ -67,12 +67,12 @@ class BatchTranscriber:
             self.device = torch.device("cpu")
 
         # Load models at initialization and keep them loaded
-        log.info("Loading transcription models...")
+        log.info(f"Loading transcription models with dtype: {dtype}...")
         self.transcriber = WhisperTranscriber(
-            whisper_checkpoint_path, self.device, self.inference_batch_size
+            whisper_checkpoint_path, self.device, self.inference_batch_size, dtype
         )
         self.clean_transcriber = WhisperTranscriber(
-            whisper_clean_checkpoint_path, self.device, self.inference_batch_size
+            whisper_clean_checkpoint_path, self.device, self.inference_batch_size, dtype
         )
         log.info("Transcription models loaded successfully")
 
@@ -334,18 +334,26 @@ class WhisperTranscriber:
     """Whisper transcriber with batch processing support."""
 
     def __init__(
-        self, checkpoint_path: str, device: torch.device, inference_batch_size: int = 4
+        self,
+        checkpoint_path: str,
+        device: torch.device,
+        inference_batch_size: int = 4,
+        dtype: torch.dtype = torch.float16,
     ):
+        self.dtype = dtype
         self.model = AutoModelForSpeechSeq2Seq.from_pretrained(
-            checkpoint_path, low_cpu_mem_usage=True, use_safetensors=True
+            checkpoint_path,
+            torch_dtype=dtype,
+            attn_implementation="flash_attention_2",
         )
-        self.processor = AutoProcessor.from_pretrained(checkpoint_path)
+        self.processor = AutoProcessor.from_pretrained(checkpoint_path, use_fast=True)
+        self.processor.feature_extractor.return_attention_mask = True  # enable the mask
         self.device = device
         self.inference_batch_size = inference_batch_size
         self.model.to(self.device)
 
-        # Compile model for better performance (requires PyTorch 2.0+)
-        if hasattr(torch, "compile") and torch.cuda.is_available():
+        # Compile model for better performance
+        if torch.cuda.is_available():
             log.info("Compiling model with torch.compile for better performance...")
             self.model = torch.compile(self.model)
             log.info("Model compilation completed")
@@ -370,6 +378,7 @@ class WhisperTranscriber:
                 audio_batch.append(None)
 
         # Process in smaller batches based on inference_batch_size parameter
+        ts = time.time()
         for i in range(0, len(audio_batch), self.inference_batch_size):
             mini_batch = audio_batch[i : i + self.inference_batch_size]
             valid_audio = [audio for audio in mini_batch if audio is not None]
@@ -382,13 +391,14 @@ class WhisperTranscriber:
 
             try:
                 # Prepare batch input
+                ts = time.time()
                 inputs = self.processor(
                     valid_audio,
                     sampling_rate=target_sr,
                     return_tensors="pt",
                     padding=True,
                 )
-                input_features = inputs.input_features.to(self.device)
+                input_features = inputs.input_features.to(self.device, dtype=self.dtype)
 
                 # Generate transcriptions
                 generation_result = self.model.generate(
@@ -398,7 +408,8 @@ class WhisperTranscriber:
                     num_beams=3,  # Reduced beams for batch processing
                     return_dict_in_generate=True,
                 )
-
+                print(f"Generation time: {time.time() - ts}")
+                ts = time.time()
                 # Calculate confidence scores
                 logp = self.model.compute_transition_scores(
                     generation_result.sequences,
@@ -410,6 +421,8 @@ class WhisperTranscriber:
                 transcriptions = self.processor.batch_decode(
                     generation_result.sequences, skip_special_tokens=False
                 )
+                print(f"Processor time: {time.time() - ts}")
+                ts = time.time()
 
                 # Process results
                 valid_idx = 0
@@ -436,6 +449,8 @@ class WhisperTranscriber:
                 # Add empty results for this batch
                 for _ in mini_batch:
                     results.append({"text": "", "confidence": 0.0})
+
+        print(f"Total time: {time.time() - ts}")
 
         return results
 
@@ -465,6 +480,7 @@ def launch_transcriber_process(gpu_id, args):
         max_chunk_duration=args.max_chunk_duration,
         chunks_dir=args.chunks_dir,
         upload_to_gcs=args.upload_to_gcs,
+        dtype=args.dtype,
     )
     transcriber.start_listening()
 
@@ -472,8 +488,8 @@ def launch_transcriber_process(gpu_id, args):
 def launch_multi_gpu_processes(args):
     """Launch transcriber processes on available GPUs (up to max_gpus limit)."""
     # Set multiprocessing start method to 'spawn' for CUDA compatibility
-    multiprocessing.set_start_method('spawn', force=True)
-    
+    multiprocessing.set_start_method("spawn", force=True)
+
     gpu_ids = get_available_gpus()
 
     if not gpu_ids:
@@ -588,8 +604,23 @@ def main():
         default=0,
         help="Maximum number of GPUs to use (0 = use all available)",
     )
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        default="float16",
+        choices=["float16", "bfloat16", "float32"],
+        help="Data type for model inference (default: float16)",
+    )
 
     args = parser.parse_args()
+
+    # Convert dtype string to torch dtype
+    dtype_map = {
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "float32": torch.float32,
+    }
+    args.dtype = dtype_map[args.dtype]
 
     if args.multi_gpu:
         launch_multi_gpu_processes(args)
@@ -604,6 +635,7 @@ def main():
             max_chunk_duration=args.max_chunk_duration,
             chunks_dir=args.chunks_dir,
             upload_to_gcs=args.upload_to_gcs,
+            dtype=args.dtype,
         )
         transcriber.start_listening()
 
