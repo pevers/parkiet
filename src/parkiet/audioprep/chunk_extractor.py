@@ -394,7 +394,7 @@ def main():
     )
     parser.add_argument(
         "--chunks-dir",
-        default="/tmp/parkiet_chunks",
+        default="/data/chunk_writer",
         help="Directory for storing chunks",
     )
     parser.add_argument(
