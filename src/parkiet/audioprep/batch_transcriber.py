@@ -116,10 +116,8 @@ class BatchTranscriber:
                         audio_data.append((audio, chunk_path))
                     except Exception as e:
                         log.error(f"Failed to load audio {chunk_path}: {e}")
-                        audio_data.append((None, chunk_path))
                 else:
                     log.warning(f"Chunk file not found: {chunk_path}")
-                    audio_data.append((None, chunk_path))
 
             if not audio_data:
                 log.warning("No valid audio files found")
@@ -145,9 +143,7 @@ class BatchTranscriber:
                     processed_chunk = ProcessedAudioChunk(
                         audio_chunk=chunk_data,
                         transcription=whisperd_results[i]["text"],
-                        transcription_conf=None,
-                        transcription_clean=clean_results[i]["text"],
-                        transcription_clean_conf=None,
+                        transcription_clean=clean_results[i]["text"]
                     )
 
                     processed_chunks.append(processed_chunk)
