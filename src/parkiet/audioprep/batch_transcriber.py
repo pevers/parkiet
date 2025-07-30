@@ -101,33 +101,38 @@ class BatchTranscriber:
                 log.warning("No valid chunks in batch")
                 return True
 
-            # Extract audio paths for batch processing
-            audio_paths = []
+            # Load audio data once for both models
+            audio_data = []
+            target_sr = 16000
             for chunk_msg in valid_chunks:
                 chunk_path = chunk_msg["chunk_path"]
                 if Path(chunk_path).exists():
-                    audio_paths.append(chunk_path)
+                    try:
+                        audio, sr = librosa.load(chunk_path, sr=target_sr)
+                        if sr != target_sr:
+                            audio = librosa.resample(
+                                audio, orig_sr=sr, target_sr=target_sr
+                            )
+                        audio_data.append((audio, chunk_path))
+                    except Exception as e:
+                        log.error(f"Failed to load audio {chunk_path}: {e}")
                 else:
                     log.warning(f"Chunk file not found: {chunk_path}")
 
-            if not audio_paths:
+            if not audio_data:
                 log.warning("No valid audio files found")
                 return False
 
-            # Batch transcribe with both models
+            # Batch transcribe with both models using pre-loaded audio
             log.info(
                 f"Running batch transcription with whisperd-nl model (inference batch size: {self.inference_batch_size})"
             )
-            whisperd_results = self.transcriber.batch_transcribe_with_confidence(
-                audio_paths
-            )
+            whisperd_results = self.transcriber.batch_transcribe(audio_data)
 
             log.info(
                 f"Running batch transcription with whisper-clean-nl model (inference batch size: {self.inference_batch_size})"
             )
-            clean_results = self.clean_transcriber.batch_transcribe_with_confidence(
-                audio_paths
-            )
+            clean_results = self.clean_transcriber.batch_transcribe(audio_data)
 
             # Process results and store in database
             processed_chunks = []
@@ -135,12 +140,14 @@ class BatchTranscriber:
                 if i < len(whisperd_results) and i < len(clean_results):
                     chunk_data = AudioChunk(**chunk_msg["chunk_data"])
 
+                    if whisperd_results[i]["text"] == "" or clean_results[i]["text"] == "":
+                        log.info(f"Skipping chunk {chunk_data.file_path} - no transcription result")
+                        continue
+
                     processed_chunk = ProcessedAudioChunk(
                         audio_chunk=chunk_data,
                         transcription=whisperd_results[i]["text"],
-                        transcription_conf=whisperd_results[i]["confidence"],
-                        transcription_clean=clean_results[i]["text"],
-                        transcription_clean_conf=clean_results[i]["confidence"],
+                        transcription_clean=clean_results[i]["text"]
                     )
 
                     processed_chunks.append(processed_chunk)
@@ -360,38 +367,24 @@ class WhisperTranscriber:
 
     @torch.no_grad()
     @torch.inference_mode()
-    def batch_transcribe_with_confidence(self, audio_paths: list[str]) -> list[dict]:
-        """Batch transcribe multiple audio files with confidence scores."""
+    def batch_transcribe(self, audio_data: list[tuple]) -> list[dict]:
+        """Batch transcribe multiple audio files."""
         results = []
         target_sr = 16000
 
-        # Load all audio files
-        audio_batch = []
-        for audio_path in audio_paths:
-            try:
-                audio, sr = librosa.load(audio_path, sr=target_sr)
-                if sr != target_sr:
-                    audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
-                audio_batch.append(audio)
-            except Exception as e:
-                log.error(f"Failed to load audio {audio_path}: {e}")
-                audio_batch.append(None)
-
         # Process in smaller batches based on inference_batch_size parameter
-        ts = time.time()
-        for i in range(0, len(audio_batch), self.inference_batch_size):
-            mini_batch = audio_batch[i : i + self.inference_batch_size]
-            valid_audio = [audio for audio in mini_batch if audio is not None]
+        for i in range(0, len(audio_data), self.inference_batch_size):
+            mini_batch = audio_data[i : i + self.inference_batch_size]
+            valid_audio = [audio for audio, _ in mini_batch if audio is not None]
 
             if not valid_audio:
                 # Add empty results for failed audio files
                 for _ in mini_batch:
-                    results.append({"text": "", "confidence": 0.0})
+                    results.append({"text": ""})
                 continue
 
             try:
                 # Prepare batch input
-                ts = time.time()
                 inputs = self.processor(
                     valid_audio,
                     sampling_rate=target_sr,
@@ -401,56 +394,37 @@ class WhisperTranscriber:
                 input_features = inputs.input_features.to(self.device, dtype=self.dtype)
 
                 # Generate transcriptions
-                generation_result = self.model.generate(
+                generated_ids = self.model.generate(
                     input_features,
                     do_sample=False,
-                    output_scores=True,
-                    num_beams=3,  # Reduced beams for batch processing
-                    return_dict_in_generate=True,
-                )
-                log.info(f"Generation time: {time.time() - ts}")
-                ts = time.time()
-                # Calculate confidence scores
-                logp = self.model.compute_transition_scores(
-                    generation_result.sequences,
-                    generation_result.scores,
-                    normalize_logits=True,
+                    num_beams=1,
+                    use_cache=True,
                 )
 
                 # Decode transcriptions
                 transcriptions = self.processor.batch_decode(
-                    generation_result.sequences, skip_special_tokens=False
+                    generated_ids, skip_special_tokens=False
                 )
-                log.info(f"Processor time: {time.time() - ts}")
-                ts = time.time()
 
                 # Process results
                 valid_idx = 0
-                for j, audio in enumerate(mini_batch):
+                for j, (audio, _) in enumerate(mini_batch):
                     if audio is not None:
                         # Clean transcription
                         clean_text = re.sub(
                             r"<\|.*?\|>", "", transcriptions[valid_idx]
                         ).strip()
 
-                        # Calculate confidence for this sequence
-                        seq_logp = logp[valid_idx]
-                        seq_conf = torch.exp(seq_logp.mean())
-
-                        results.append(
-                            {"text": clean_text, "confidence": float(seq_conf)}
-                        )
+                        results.append({"text": clean_text})
                         valid_idx += 1
                     else:
-                        results.append({"text": "", "confidence": 0.0})
+                        results.append({"text": ""})
 
             except Exception as e:
                 log.error(f"Batch transcription failed: {e}")
                 # Add empty results for this batch
                 for _ in mini_batch:
-                    results.append({"text": "", "confidence": 0.0})
-
-        log.info(f"Total time: {time.time() - ts}")
+                    results.append({"text": ""})
 
         return results
 
