@@ -55,7 +55,7 @@ def queue_audio_file(
 
 
 def queue_from_file(
-    mp3_file_list: str,
+    file_path: str,
     queue_name: str = "audio_processing",
     window_size_sec: float = 30.0,
     skip_start_sec: float = 120.0,
@@ -65,7 +65,7 @@ def queue_from_file(
     Queue GCS audio files from a file list for processing.
 
     Args:
-        mp3_file_list: Path to file containing GCS MP3 paths (one per line)
+        file_path: Path to file containing GCS MP3 paths (one per line)
         queue_name: Redis queue name
         window_size_sec: Size of sliding window in seconds
         skip_start_sec: Time to skip from start
@@ -74,20 +74,20 @@ def queue_from_file(
     Returns:
         Number of files queued
     """
-    file_path = Path(mp3_file_list)
+    path = Path(file_path)
 
-    if not file_path.exists():
-        raise FileNotFoundError(f"MP3 file list not found: {file_path}")
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
 
     # Read GCS MP3 file paths from file
-    with open(file_path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:
         gcs_mp3_paths = [line.strip() for line in f if line.strip()]
 
     if not gcs_mp3_paths:
-        log.warning(f"No GCS MP3 paths found in: {file_path}")
+        log.warning(f"No GCS MP3 paths found in: {path}")
         return 0
 
-    log.info(f"Found {len(gcs_mp3_paths)} GCS MP3 paths in: {file_path}")
+    log.info(f"Found {len(gcs_mp3_paths)} GCS MP3 paths in: {path}")
 
     # Random shuffle the list because we will probably not be able to process all files
     random.shuffle(gcs_mp3_paths)
@@ -118,80 +118,92 @@ def queue_from_file(
     return queued_count
 
 
+def process_input(
+    input_path: str,
+    queue_name: str = "audio_processing",
+    window_size_sec: float = 30.0,
+    skip_start_sec: float = 120.0,
+    skip_end_sec: float = 180.0,
+) -> int:
+    """
+    Process input which can be either a GCS path or a file containing GCS paths.
+
+    Args:
+        input_path: Either a GCS path or a file containing GCS paths
+        queue_name: Redis queue name
+        window_size_sec: Size of sliding window in seconds
+        skip_start_sec: Time to skip from start
+        skip_end_sec: Time to skip from end
+
+    Returns:
+        Number of files queued
+    """
+    # Check if input is a GCS path (starts with gs://)
+    if input_path.startswith("gs://"):
+        success = queue_audio_file(
+            input_path,
+            queue_name,
+            window_size_sec,
+            skip_start_sec,
+            skip_end_sec,
+        )
+        if success:
+            log.info(f"Successfully queued: {input_path}")
+            return 1
+        else:
+            log.info(f"File {input_path} was already processed, not queued")
+            return 0
+    else:
+        # Treat as a file containing GCS paths
+        return queue_from_file(
+            input_path,
+            queue_name,
+            window_size_sec,
+            skip_start_sec,
+            skip_end_sec,
+        )
+
+
 def main():
     """Main function with argument parsing."""
     parser = argparse.ArgumentParser(
         description="Audio file queueing with Redis support",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Commands:
-  queue     - Queue a single GCS audio file for processing
-  file      - Queue GCS audio files from a file list
+The input can be either:
+  - A GCS path (e.g., gs://bucket/path/to/audio/file.mp3)
+  - A file containing GCS paths (one per line)
 
 Examples:
-  %(prog)s queue gs://bucket/path/to/audio/file.mp3
-  %(prog)s file bucket_mp3_files.txt
+  %(prog)s gs://bucket/path/to/audio/file.mp3
+  %(prog)s bucket_mp3_files.txt
         """,
     )
 
-    subparsers = parser.add_subparsers(dest="command", help="Available commands")
-
-    # Queue command
-    queue_parser = subparsers.add_parser("queue", help="Queue single GCS audio file")
-    queue_parser.add_argument("gcs_audio_path", help="GCS path to audio file")
-    queue_parser.add_argument(
+    parser.add_argument(
+        "input_path",
+        help="GCS path to audio file or file containing GCS paths"
+    )
+    parser.add_argument(
         "--queue-name",
         "-q",
         default="audio_processing",
         help="Redis queue name (default: audio_processing)",
     )
-    queue_parser.add_argument(
+    parser.add_argument(
         "--window-size",
         "-s",
         type=float,
         default=30.0,
         help="Size of sliding window in seconds (default: 30.0)",
     )
-    queue_parser.add_argument(
-        "--skip-start",
-        type=float,
-        default=60.0,
-        help="Time to skip from start in seconds (default: 60.0)",
-    )
-    queue_parser.add_argument(
-        "--skip-end",
-        type=float,
-        default=120.0,
-        help="Time to skip from end in seconds (default: 120.0)",
-    )
-
-    # File command
-    file_parser = subparsers.add_parser(
-        "file", help="Queue GCS audio files from file list"
-    )
-    file_parser.add_argument(
-        "mp3_file_list", help="Path to file containing GCS MP3 paths"
-    )
-    file_parser.add_argument(
-        "--queue-name",
-        "-q",
-        default="audio_processing",
-        help="Redis queue name (default: audio_processing)",
-    )
-    file_parser.add_argument(
-        "--window-size",
-        "-s",
-        type=float,
-        default=30.0,
-        help="Size of sliding window in seconds (default: 30.0)",
-    )
-    file_parser.add_argument(
+    parser.add_argument(
         "--skip-start",
         type=float,
         default=120.0,
         help="Time to skip from start in seconds (default: 120.0)",
     )
-    file_parser.add_argument(
+    parser.add_argument(
         "--skip-end",
         type=float,
         default=180.0,
@@ -200,29 +212,20 @@ Examples:
 
     args = parser.parse_args()
 
-    if args.command == "queue":
-        success = queue_audio_file(
-            args.gcs_audio_path,
-            args.queue_name,
-            args.window_size,
-            args.skip_start,
-            args.skip_end,
-        )
-        if success:
-            log.info(f"Successfully queued: {args.gcs_audio_path}")
-        else:
-            log.info(f"File {args.gcs_audio_path} was already processed, not queued")
-    elif args.command == "file":
-        count = queue_from_file(
-            args.mp3_file_list,
-            args.queue_name,
-            args.window_size,
-            args.skip_start,
-            args.skip_end,
-        )
-        log.info(f"Queued {count} files")
+    count = process_input(
+        args.input_path,
+        args.queue_name,
+        args.window_size,
+        args.skip_start,
+        args.skip_end,
+    )
+    
+    if args.input_path.startswith("gs://"):
+        # Single file case - count is already logged in process_input
+        pass
     else:
-        parser.print_help()
+        # File list case
+        log.info(f"Queued {count} files")
 
 
 if __name__ == "__main__":
