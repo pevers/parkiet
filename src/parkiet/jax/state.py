@@ -241,6 +241,47 @@ class DecoderOutput:
         self.generated_tokens = self.generated_tokens.at[:, :length, :].set(dec_out)
         self.prefill_steps = prefill_steps
 
+@dataclass
+class TrainingDecoderOutput:
+    generated_tokens: jnp.ndarray  # [B, Tdec, channels], dtype=int32
+    prefill_steps: list[int]
+
+    @classmethod
+    def new(cls, batch_size: int, config) -> "TrainingDecoderOutput":
+        audio_len = config.decoder_max_position_embeddings
+        channels = config.decoder_num_channels
+        tokens = jnp.full(
+            (batch_size, audio_len, channels), fill_value=-1, dtype=jnp.int32
+        )
+        return cls(generated_tokens=tokens, prefill_steps=[])
+
+    def get_tokens_at(self, step_from: int, step_to: int | None = None) -> jnp.ndarray:
+        if step_to is None:
+            step_to = step_from + 1
+        return self.generated_tokens[:, step_from:step_to, :]
+
+    def update_one(
+        self, dec_out: jnp.ndarray, step: int, apply_mask: bool = False
+    ) -> None:
+        """
+        dec_out: [B, channels]
+        """
+        dec_out = dec_out.astype(self.generated_tokens.dtype)
+        if apply_mask:
+            mask = self.generated_tokens[:, step, :] == -1
+            new_vals = jnp.where(mask, dec_out, self.generated_tokens[:, step, :])
+        else:
+            new_vals = dec_out
+        self.generated_tokens = self.generated_tokens.at[:, step, :].set(new_vals)
+
+    def prefill(self, dec_out: jnp.ndarray, prefill_steps: list[int]) -> None:
+        """
+        dec_out: [B, L, channels], where L ≤ max audio length
+        """
+        length = dec_out.shape[1]
+        self.generated_tokens = self.generated_tokens.at[:, :length, :].set(dec_out)
+        self.prefill_steps = prefill_steps
+
 
 @dataclass
 class EncoderTrainingState:
@@ -252,21 +293,21 @@ class EncoderTrainingState:
     attn_mask: jnp.ndarray  # [B, 1, T, T], dtype=bool
 
     @classmethod
-    def new(cls, config: DiaConfig, src_tokens: jnp.ndarray) -> "EncoderTrainingState":
+    def new(cls, max_position_embeddings: int, src_tokens: jnp.ndarray) -> "EncoderTrainingState":
         """
         Create encoder training state.
 
         Args:
-            config: Model configuration
+            max_position_embeddings: Maximum position embeddings
             src_tokens: [B, T] of token IDs
 
         Returns:
             EncoderTrainingState instance
         """
-        seq_len = config.encoder_config.max_position_embeddings
+        seq_len = max_position_embeddings
         # [1, T]
         positions = jnp.arange(seq_len, dtype=jnp.float32)[None, :]
-        # [B, T] mask non-padding tokens (assuming 0 is padding)
+        # [B, T] mask non-padding
         padding_mask = src_tokens != 0
         # Self-attention mask
         attn_mask = create_attn_mask(padding_mask, padding_mask, is_causal=False)
@@ -306,7 +347,7 @@ class DecoderTrainingState:
         Create decoder training state.
 
         Args:
-            config: Model configuration
+            config: Model configuration (can be None if max_generation_length provided)
             enc_state: Encoder training state
             enc_out: Encoder outputs [B, Tenc, D]
             dec_cross_attn_cache: Cross-attention cache
@@ -316,9 +357,12 @@ class DecoderTrainingState:
         Returns:
             DecoderTrainingState instance
         """
-        max_audio_len = (
-            max_generation_length or config.decoder_config.max_position_embeddings
-        )
+        if max_generation_length is not None:
+            max_audio_len = max_generation_length
+        elif config is not None:
+            max_audio_len = config.decoder_config.max_position_embeddings
+        else:
+            raise ValueError("Either max_generation_length or config must be provided")
         batch_size = enc_out.shape[0]
 
         # Create decoder positions for the sequence length

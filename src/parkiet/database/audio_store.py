@@ -405,3 +405,124 @@ class AudioStore:
                 )
 
             return results
+
+    def get_all_audio_chunks(self, limit: int | None = None) -> list[dict]:
+        """
+        Get all audio chunks from the database.
+
+        Args:
+            limit: Optional limit on number of chunks to return
+
+        Returns:
+            List of dictionaries with chunk data including transcriptions
+        """
+        with self.db.get_cursor() as cursor:
+            query = """
+                SELECT 
+                    ac.id as chunk_id,
+                    ac.chunk_file_path,
+                    ac.start_time_ms,
+                    ac.end_time_ms,
+                    ac.transcription,
+                    ac.transcription_clean,
+                    af.original_file_path,
+                    af.audio_duration_sec
+                FROM audio_chunks ac
+                JOIN audio_files af ON ac.audio_file_id = af.id
+                WHERE af.success = true
+                ORDER BY af.id, ac.start_time_ms
+            """
+
+            if limit:
+                query += f" LIMIT {limit}"
+
+            cursor.execute(query)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def calculate_speaker_weights(self) -> dict[int, float]:
+        """
+        Calculate weights for all speakers based on their total speaking time.
+        Weight is normalized so all weights sum to 1.0.
+
+        Returns:
+            Dictionary mapping speaker_id to weight (0.0-1.0)
+        """
+        with self.db.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT 
+                    speaker_id,
+                    SUM(end_time_sec - start_time_sec) as total_duration
+                FROM audio_events
+                WHERE speaker_id IS NOT NULL
+                GROUP BY speaker_id
+            """)
+
+            results = cursor.fetchall()
+            if not results:
+                return {}
+
+            # Calculate total duration across all speakers
+            total_duration = sum(row["total_duration"] for row in results)
+
+            # Calculate normalized weights
+            weights = {}
+            for row in results:
+                speaker_id = row["speaker_id"]
+                duration = row["total_duration"]
+                weights[speaker_id] = (
+                    float(duration / total_duration) if total_duration > 0 else 0.0
+                )
+
+            return weights
+
+    def get_chunk_speaker_weight(
+        self, chunk_id: int, speaker_weights: dict[int, float]
+    ) -> float:
+        """
+        Calculate the weight of a chunk based on the speakers present and their weights.
+
+        Args:
+            chunk_id: ID of the chunk
+            speaker_weights: Dictionary mapping speaker_id to weight
+
+        Returns:
+            Combined weight for the chunk
+        """
+        with self.db.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 
+                    speaker_id,
+                    SUM(end_time_sec - start_time_sec) as duration_in_chunk
+                FROM audio_events
+                WHERE chunk_id = %s AND speaker_id IS NOT NULL
+                GROUP BY speaker_id
+            """,
+                (chunk_id,),
+            )
+
+            chunk_events = cursor.fetchall()
+            if not chunk_events:
+                return 0.0
+
+            # Calculate total duration of this chunk
+            total_chunk_duration = sum(
+                event["duration_in_chunk"] for event in chunk_events
+            )
+
+            # Calculate weighted average based on speaker presence
+            weighted_sum = 0.0
+            for event in chunk_events:
+                speaker_id = event["speaker_id"]
+                speaker_duration = event["duration_in_chunk"]
+                speaker_weight = speaker_weights.get(speaker_id, 0.0)
+
+                # Weight by proportion of chunk this speaker occupies
+                proportion = (
+                    speaker_duration / total_chunk_duration
+                    if total_chunk_duration > 0
+                    else 0.0
+                )
+                weighted_sum += speaker_weight * proportion
+
+            return weighted_sum

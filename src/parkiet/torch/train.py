@@ -165,7 +165,7 @@ def main():
     os.makedirs(training_config.log_dir, exist_ok=True)
     writer = SummaryWriter(log_dir=training_config.log_dir)
 
-    dia_config = DiaConfig.load("config.test.json")
+    dia_config = DiaConfig.load("config.json")
     dia = Dia(
         config=dia_config,
         compute_dtype=ComputeDtype.BFLOAT16,
