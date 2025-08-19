@@ -13,24 +13,21 @@ import optax
 from tqdm import tqdm
 import orbax.checkpoint as ocp
 from torch.utils.tensorboard import SummaryWriter
-import jax.tree_util as jtu
 from parkiet.dia.config import DiaConfig
 from parkiet.jax.model import Dia, ComputeDtype
 from parkiet.jax.layers import DiaModel
 from parkiet.torch.dataset import create_dataset
-from parkiet.jax.state import (
+from parkiet.jax.training_state import (
     DecoderTrainingState,
     EncoderTrainingState,
-    DecoderOutput,
-    DecoderInferenceState,
     TrainingDecoderOutput,
 )
+from parkiet.jax.audio import build_delay_indices, apply_audio_delay
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 log = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True)
 class JaxConfig:
@@ -39,13 +36,17 @@ class JaxConfig:
     encoder_max_position_embeddings: int
     decoder_max_position_embeddings: int
     decoder_num_channels: int
+    decoder_num_key_value_heads: int
+    decoder_num_hidden_layers: int
+    decoder_cross_head_dim: int
     compute_dtype: jnp.dtype
+    delay_pattern: tuple[int, ...]
 
 class TrainingConfig:
     """Configuration for training parameters."""
 
     def __init__(self, **kwargs):
-        self.batch_size: int = kwargs.get("batch_size", 8)
+        self.batch_size: int = kwargs.get("batch_size", 1)
         self.learning_rate: float = kwargs.get("learning_rate", 1e-4)
         self.warmup_steps: int = kwargs.get("warmup_steps", 100)
         self.total_steps: int = kwargs.get("total_steps", 1000)
@@ -84,7 +85,7 @@ def compute_loss(
     model: DiaModel,
     text_tokens: jnp.ndarray,
     audio_tokens: jnp.ndarray,
-    jax_config: dict,
+    jax_config: JaxConfig,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
     """
     Compute the loss for a batch of data using teacher forcing.
@@ -103,7 +104,7 @@ def compute_loss(
 
     # Encode text
     enc_state = EncoderTrainingState.new(jax_config.encoder_max_position_embeddings, text_tokens)
-    encoder_outputs = model.encoder(text_tokens, enc_state)  # type: ignore
+    encoder_outputs = model.encoder(text_tokens, enc_state)
 
     # Precompute cross-attention cache
     dec_cross_attn_cache = model.decoder.precompute_cross_attn_cache(encoder_outputs)
@@ -119,46 +120,45 @@ def compute_loss(
         max_generation_length=actual_seq_len,
     )
 
-    # Prepare audio input (add BOS token)
-    audio_bos_value = jax_config.bos_token_id
-    bos_tokens = jnp.full(
-        (batch_size, 1, jax_config.decoder_num_channels),
-        audio_bos_value,
-        dtype=audio_tokens.dtype,
+    # Apply delay pattern to audio tokens
+    audio_seq_len = audio_tokens.shape[1]
+    num_channels = jax_config.decoder_num_channels
+    
+    # Build delay indices for the input
+    delay_indices = build_delay_indices(batch_size, audio_seq_len, num_channels, jax_config.delay_pattern)
+    
+    # Apply delay pattern to create shifted input
+    audio_input = apply_audio_delay(
+        audio_tokens,
+        pad_value=jax_config.pad_token_id,
+        bos_value=jax_config.bos_token_id,
+        precomp=delay_indices
     )
-    audio_input = jnp.concatenate([bos_tokens, audio_tokens[:, :-1, :]], axis=1)
 
     # Forward pass through decoder
-    dec_output = TrainingDecoderOutput.new(batch_size, jax_config)
+    dec_output = TrainingDecoderOutput.new(batch_size, jax_config.decoder_max_position_embeddings, jax_config.decoder_num_channels)
     dec_output.prefill(audio_input, [audio_input.shape[1]] * batch_size)
 
     dec_step = audio_input.shape[1] - 1
     dec_state.prepare_step(0, dec_step)
     tokens = dec_output.get_tokens_at(0, dec_step)
-
-    # Create inference state with same data but compatible type
-    inference_state = DecoderInferenceState(
-        dtype=dec_state.dtype,
-        enc_out=dec_state.enc_out,
-        enc_positions=dec_state.enc_positions,
-        dec_positions=dec_state.dec_positions,
-        self_attn_cache=dec_state.self_attn_cache
-        or dec_state.cross_attn_cache,  # Use cross_attn_cache as fallback
-        cross_attn_cache=dec_state.cross_attn_cache,
-        causal_attn_mask=dec_state.causal_attn_mask,
-        cross_attn_mask=dec_state.cross_attn_mask,
-    )
-
-    decoder_outputs = model.decoder(tokens, inference_state)
+    decoder_outputs = model.decoder(tokens, dec_state)
 
     # Compute loss
     # decoder_outputs: [batch_size, seq_len, channels, vocab_size]
     # target: [batch_size, seq_len, channels]
     vocab_size = decoder_outputs.shape[-1]
 
+    # Create target tokens by shifting the original audio tokens by 1 position
+    # The target is the next original token that should be predicted at each position
+    audio_target = jnp.concatenate([
+        audio_tokens[:, 1:, :],  # Original tokens shifted by 1
+        jnp.full((batch_size, 1, num_channels), jax_config.pad_token_id, dtype=audio_tokens.dtype)  # Add EOS/PAD
+    ], axis=1)
+    
     # Reshape for cross-entropy loss
     logits = decoder_outputs.reshape(-1, vocab_size)  # [B*S*C, V]
-    targets = audio_tokens.reshape(-1)  # [B*S*C]
+    targets = audio_target.reshape(-1)  # [B*S*C]
 
     # Create mask for valid tokens (ignore padding)
     mask = targets != audio_pad_value
@@ -195,7 +195,7 @@ def train_step(
     model: DiaModel,
     optimizer: nnx.Optimizer,
     batch: dict[str, jnp.ndarray],
-    jax_config: dict,
+    jax_config: JaxConfig,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
     """
     Perform a single training step.
@@ -230,7 +230,7 @@ def train_step(
 def evaluate_step(
     model: DiaModel,
     batch: dict[str, jnp.ndarray],
-    jax_config: dict,
+    jax_config: JaxConfig,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
     """
     Perform a single evaluation step.
@@ -267,7 +267,7 @@ def save_checkpoint(
     checkpoint_path.mkdir(parents=True, exist_ok=True)
 
     # Get model state
-    graphdef, state = nnx.split(model)
+    _, state = nnx.split(model)
     state_dict = nnx.to_pure_dict(state)
 
     # Save checkpoint
@@ -309,6 +309,11 @@ def main():
         encoder_max_position_embeddings=dia_config.encoder_config.max_position_embeddings,
         decoder_max_position_embeddings=dia_config.decoder_config.max_position_embeddings,
         decoder_num_channels=dia_config.decoder_config.num_channels,
+        decoder_num_key_value_heads=dia_config.decoder_config.num_key_value_heads,
+        decoder_num_hidden_layers=dia_config.decoder_config.num_hidden_layers,
+        decoder_cross_head_dim=dia_config.decoder_config.cross_head_dim,
+        # Convert to tuple to make it hashable
+        delay_pattern=tuple(dia_config.delay_pattern),
         compute_dtype=compute_dtype.to_dtype(),
     )
     model = dia.model
