@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import flax.nnx as nnx
 from parkiet.jax.state import create_attn_mask
 
+
 class KVCacheTraining(nnx.Module):
     """
     JAX-friendly KV cache for training (smaller batch size, no CFG)
@@ -79,7 +80,9 @@ class EncoderTrainingState:
     attn_mask: jnp.ndarray  # [B, 1, T, T], dtype=bool
 
     @classmethod
-    def new(cls, max_position_embeddings: int, src_tokens: jnp.ndarray) -> "EncoderTrainingState":
+    def new(
+        cls, max_position_embeddings: int, src_tokens: jnp.ndarray
+    ) -> "EncoderTrainingState":
         """
         Create encoder training state.
 
@@ -143,7 +146,9 @@ class DecoderTrainingState:
         Returns:
             DecoderTrainingState instance
         """
-        max_audio_len = max_generation_length or jax_config.decoder_max_position_embeddings
+        max_audio_len = (
+            max_generation_length or jax_config.decoder_max_position_embeddings
+        )
         batch_size = enc_out.shape[0]
 
         # Create decoder positions for the sequence length
@@ -195,7 +200,12 @@ class TrainingDecoderOutput:
     prefill_steps: list[int]
 
     @classmethod
-    def new(cls, batch_size: int, decoder_max_position_embeddings: int, decoder_num_channels: int) -> "TrainingDecoderOutput":
+    def new(
+        cls,
+        batch_size: int,
+        decoder_max_position_embeddings: int,
+        decoder_num_channels: int,
+    ) -> "TrainingDecoderOutput":
         audio_len = decoder_max_position_embeddings
         channels = decoder_num_channels
         tokens = jnp.full(

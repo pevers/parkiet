@@ -660,7 +660,6 @@ class Dia:
                           Can be a file path (str), a pre-loaded tensor (DAC codes), or None.
                           If a list, its length must match the batch size of the text input.
             audio_prompt_path: (Deprecated) Use `audio_prompt` instead.
-            use_cfg_filter: (Deprecated) This parameter is no longer used.
             verbose: If True, prints progress information during generation, including
                      speed metrics.
 

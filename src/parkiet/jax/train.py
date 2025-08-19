@@ -3,6 +3,7 @@ JAX training loop implementation using flax nnx.
 """
 
 import logging
+import os
 import time
 from pathlib import Path
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+
 @dataclass(frozen=True)
 class JaxConfig:
     pad_token_id: int
@@ -42,6 +44,7 @@ class JaxConfig:
     compute_dtype: jnp.dtype
     delay_pattern: tuple[int, ...]
 
+
 class TrainingConfig:
     """Configuration for training parameters."""
 
@@ -49,13 +52,15 @@ class TrainingConfig:
         self.batch_size: int = kwargs.get("batch_size", 1)
         self.learning_rate: float = kwargs.get("learning_rate", 1e-4)
         self.warmup_steps: int = kwargs.get("warmup_steps", 100)
-        self.total_steps: int = kwargs.get("total_steps", 1000)
+        self.total_steps: int = kwargs.get("total_steps", 2000)
         self.gradient_accumulation_steps: int = kwargs.get(
             "gradient_accumulation_steps", 8
         )
-        self.checkpoint_dir: str = kwargs.get("checkpoint_dir", "weights_jax")
+        self.checkpoint_dir: str = os.path.abspath(
+            kwargs.get("checkpoint_dir", "weights")
+        )
         self.checkpoint_every_steps: int = kwargs.get("checkpoint_every_steps", 500)
-        self.sample_every_steps: int = kwargs.get("sample_every_steps", 500)
+        self.sample_every_steps: int = kwargs.get("sample_every_steps", 200)
         self.log_every: int = kwargs.get("log_every", 10)
         self.max_grad_norm: float = kwargs.get("max_grad_norm", 1.0)
         self.log_dir: str = kwargs.get("log_dir", "logs")
@@ -70,13 +75,14 @@ def create_cosine_schedule_with_warmup(
     """Create a cosine learning rate schedule with warmup."""
 
     def schedule_fn(step):
-        if step < warmup_steps:
-            return learning_rate * step / warmup_steps
+        warmup_lr = learning_rate * step / warmup_steps
 
         progress = (step - warmup_steps) / (total_steps - warmup_steps)
-        return (
+        cosine_lr = (
             learning_rate * 0.5 * (1.0 + jnp.cos(jnp.pi * num_cycles * 2.0 * progress))
         )
+
+        return jnp.where(step < warmup_steps, warmup_lr, cosine_lr)
 
     return schedule_fn
 
@@ -103,7 +109,9 @@ def compute_loss(
     audio_pad_value = jax_config.pad_token_id
 
     # Encode text
-    enc_state = EncoderTrainingState.new(jax_config.encoder_max_position_embeddings, text_tokens)
+    enc_state = EncoderTrainingState.new(
+        jax_config.encoder_max_position_embeddings, text_tokens
+    )
     encoder_outputs = model.encoder(text_tokens, enc_state)
 
     # Precompute cross-attention cache
@@ -123,20 +131,26 @@ def compute_loss(
     # Apply delay pattern to audio tokens
     audio_seq_len = audio_tokens.shape[1]
     num_channels = jax_config.decoder_num_channels
-    
+
     # Build delay indices for the input
-    delay_indices = build_delay_indices(batch_size, audio_seq_len, num_channels, jax_config.delay_pattern)
-    
+    delay_indices = build_delay_indices(
+        batch_size, audio_seq_len, num_channels, jax_config.delay_pattern
+    )
+
     # Apply delay pattern to create shifted input
     audio_input = apply_audio_delay(
         audio_tokens,
         pad_value=jax_config.pad_token_id,
         bos_value=jax_config.bos_token_id,
-        precomp=delay_indices
+        precomp=delay_indices,
     )
 
     # Forward pass through decoder
-    dec_output = TrainingDecoderOutput.new(batch_size, jax_config.decoder_max_position_embeddings, jax_config.decoder_num_channels)
+    dec_output = TrainingDecoderOutput.new(
+        batch_size,
+        jax_config.decoder_max_position_embeddings,
+        jax_config.decoder_num_channels,
+    )
     dec_output.prefill(audio_input, [audio_input.shape[1]] * batch_size)
 
     dec_step = audio_input.shape[1] - 1
@@ -149,13 +163,24 @@ def compute_loss(
     # target: [batch_size, seq_len, channels]
     vocab_size = decoder_outputs.shape[-1]
 
-    # Create target tokens by shifting the original audio tokens by 1 position
-    # The target is the next original token that should be predicted at each position
-    audio_target = jnp.concatenate([
-        audio_tokens[:, 1:, :],  # Original tokens shifted by 1
-        jnp.full((batch_size, 1, num_channels), jax_config.pad_token_id, dtype=audio_tokens.dtype)  # Add EOS/PAD
-    ], axis=1)
-    
+    # Create target tokens by shifting the delayed input tokens by 1 position
+    # The decoder sees delayed_input[t] and should predict delayed_input[t+1]
+    audio_target = jnp.concatenate(
+        [
+            audio_input[:, 1:, :],  # Delayed input shifted by 1
+            jnp.full(
+                (batch_size, 1, num_channels),
+                jax_config.pad_token_id,
+                dtype=audio_input.dtype,
+            ),  # Add EOS/PAD
+        ],
+        axis=1,
+    )
+
+    # Ensure target sequence length matches decoder output
+    decoder_seq_len = decoder_outputs.shape[1]
+    audio_target = audio_target[:, :decoder_seq_len, :]
+
     # Reshape for cross-entropy loss
     logits = decoder_outputs.reshape(-1, vocab_size)  # [B*S*C, V]
     targets = audio_target.reshape(-1)  # [B*S*C]
@@ -226,7 +251,6 @@ def train_step(
     return loss, metrics
 
 
-@nnx.jit(static_argnums=(2,))  # jax_config is static
 def evaluate_step(
     model: DiaModel,
     batch: dict[str, jnp.ndarray],

@@ -19,6 +19,7 @@ class AudioTextDataset:
         max_audio_length: int | None = None,
         max_text_length: int | None = None,
         transcript_clean_probability: float = 0.15,
+        text_dropout_probability: float = 0.15,
     ):
         """
         Initialize the dataset.
@@ -29,6 +30,7 @@ class AudioTextDataset:
             max_audio_length: Maximum audio sequence length (in tokens). If None, uses config value.
             max_text_length: Maximum text sequence length (in tokens). If None, uses config value.
             transcript_clean_probability: Probability of using transcript_clean instead of transcription (default 0.15)
+            text_dropout_probability: Probability of dropping text condition for classifier-free guidance (default 0.15)
         """
         self.parquet_path = Path(parquet_path)
         self.config = config
@@ -39,6 +41,7 @@ class AudioTextDataset:
             max_text_length or config.encoder_config.max_position_embeddings
         )
         self.transcript_clean_probability = transcript_clean_probability
+        self.text_dropout_probability = text_dropout_probability
 
         if not self.parquet_path.exists():
             raise FileNotFoundError(f"Parquet file not found: {self.parquet_path}")
@@ -100,6 +103,12 @@ class AudioTextDataset:
 
         # Process text
         text_tokens = self._encode_text(transcript_text)
+
+        # Apply text dropout for classifier-free guidance
+        if random.random() < self.text_dropout_probability:
+            # Set all text tokens to pad value to drop text condition
+            pad_value = getattr(self.config, "text_pad_value", 0)
+            text_tokens.fill(pad_value)
 
         # Process audio
         audio_tokens = self._decode_audio(
@@ -165,6 +174,12 @@ class AudioTextDataset:
                 f"Audio array has {audio_array.shape[-1]} channels, "
                 f"but config expects {self.channels} channels"
             )
+
+        # Add EOS token before padding/truncating
+        eos_token = np.full(
+            (1, self.channels), self.config.eos_token_id, dtype=np.int64
+        )
+        audio_array = np.concatenate([audio_array, eos_token], axis=0)
 
         # Pad or truncate audio to max_audio_length
         current_length = audio_array.shape[0]
@@ -266,6 +281,7 @@ def create_dataset(
     max_audio_length: int | None = None,
     max_text_length: int | None = None,
     transcript_clean_probability: float = 0.15,
+    text_dropout_probability: float = 0.15,
 ) -> AudioTextDataset:
     """
     Create an AudioTextDataset for JAX training.
@@ -276,6 +292,7 @@ def create_dataset(
         max_audio_length: Maximum audio sequence length
         max_text_length: Maximum text sequence length
         transcript_clean_probability: Probability of using transcript_clean (default 0.15)
+        text_dropout_probability: Probability of dropping text condition for classifier-free guidance (default 0.15)
 
     Returns:
         AudioTextDataset instance
@@ -286,4 +303,5 @@ def create_dataset(
         max_audio_length=max_audio_length,
         max_text_length=max_text_length,
         transcript_clean_probability=transcript_clean_probability,
+        text_dropout_probability=text_dropout_probability,
     )
