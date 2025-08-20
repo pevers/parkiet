@@ -18,6 +18,7 @@ class MlpBlock(nnx.Module):
         embed_dim: int,
         intermediate_dim: int,
         compute_dtype: jnp.dtype = jnp.float32,
+        param_dtype: jnp.dtype = jnp.float32,
         *,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
@@ -26,7 +27,7 @@ class MlpBlock(nnx.Module):
             in_features=(embed_dim,),
             out_features=(2, intermediate_dim),
             use_bias=False,
-            param_dtype=compute_dtype,
+            param_dtype=param_dtype,
             dtype=compute_dtype,
             rngs=rngs,
         )
@@ -35,7 +36,7 @@ class MlpBlock(nnx.Module):
             in_features=(intermediate_dim,),
             out_features=(embed_dim,),
             use_bias=False,
-            param_dtype=compute_dtype,
+            param_dtype=param_dtype,
             dtype=compute_dtype,
             rngs=rngs,
         )
@@ -140,6 +141,7 @@ class CrossAttention(nnx.Module):
         head_dim: int,
         compute_dtype: jnp.dtype = jnp.float32,
         out_embed_dim: int | None = None,
+        param_dtype: jnp.dtype = jnp.float32,
         *,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
@@ -161,7 +163,7 @@ class CrossAttention(nnx.Module):
             out_features=(num_query_heads, head_dim),
             use_bias=False,
             dtype=compute_dtype,
-            param_dtype=compute_dtype,
+            param_dtype=param_dtype,
             rngs=rngs,
         )
         self.k_proj = nnx.LinearGeneral(
@@ -170,7 +172,7 @@ class CrossAttention(nnx.Module):
             out_features=(num_kv_heads, head_dim),
             use_bias=False,
             dtype=compute_dtype,
-            param_dtype=compute_dtype,
+            param_dtype=param_dtype,
             rngs=rngs,
         )
         self.v_proj = nnx.LinearGeneral(
@@ -179,7 +181,7 @@ class CrossAttention(nnx.Module):
             out_features=(num_kv_heads, head_dim),
             use_bias=False,
             dtype=compute_dtype,
-            param_dtype=compute_dtype,
+            param_dtype=param_dtype,
             rngs=rngs,
         )
         self.o_proj = nnx.LinearGeneral(
@@ -188,7 +190,7 @@ class CrossAttention(nnx.Module):
             out_features=(self.output_dim,),
             use_bias=False,
             dtype=compute_dtype,
-            param_dtype=compute_dtype,
+            param_dtype=param_dtype,
             rngs=rngs,
         )
 
@@ -295,6 +297,7 @@ class SelfAttention(nnx.Module):
         head_dim: int,
         compute_dtype: jnp.dtype = jnp.float32,
         out_embed_dim: int | None = None,
+        param_dtype: jnp.dtype = jnp.float32,
         *,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
@@ -315,7 +318,7 @@ class SelfAttention(nnx.Module):
             in_features=(q_embed_dim,),
             out_features=(num_query_heads, head_dim),
             axis=(-1,),
-            param_dtype=compute_dtype,
+            param_dtype=param_dtype,
             dtype=compute_dtype,
             use_bias=False,
             rngs=rngs,
@@ -324,7 +327,7 @@ class SelfAttention(nnx.Module):
             in_features=(kv_embed_dim,),
             out_features=(num_kv_heads, head_dim),
             axis=(-1,),
-            param_dtype=compute_dtype,
+            param_dtype=param_dtype,
             dtype=compute_dtype,
             use_bias=False,
             rngs=rngs,
@@ -333,7 +336,7 @@ class SelfAttention(nnx.Module):
             in_features=(kv_embed_dim,),
             out_features=(num_kv_heads, head_dim),
             axis=(-1,),
-            param_dtype=compute_dtype,
+            param_dtype=param_dtype,
             dtype=compute_dtype,
             use_bias=False,
             rngs=rngs,
@@ -342,7 +345,7 @@ class SelfAttention(nnx.Module):
             in_features=(num_query_heads, head_dim),
             out_features=(self.output_dim,),
             axis=(-2, -1),
-            param_dtype=compute_dtype,
+            param_dtype=param_dtype,
             dtype=compute_dtype,
             use_bias=False,
             rngs=rngs,
@@ -420,6 +423,7 @@ class EncoderLayer(nnx.Module):
         self,
         config: DiaConfig,
         compute_dtype: jnp.dtype = jnp.float32,
+        param_dtype: jnp.dtype = jnp.float32,
         *,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
@@ -442,6 +446,7 @@ class EncoderLayer(nnx.Module):
             num_kv_heads=enc_config.num_key_value_heads,
             head_dim=enc_config.head_dim,
             compute_dtype=self.compute_dtype,
+            param_dtype=param_dtype,
             out_embed_dim=embed_dim,
             rngs=rngs,
         )
@@ -455,6 +460,7 @@ class EncoderLayer(nnx.Module):
             embed_dim=embed_dim,
             intermediate_dim=enc_config.intermediate_size,
             compute_dtype=self.compute_dtype,
+            param_dtype=param_dtype,
             rngs=rngs,
         )
 
@@ -489,6 +495,7 @@ class Encoder(nnx.Module):
         self,
         config: DiaConfig,
         compute_dtype: jnp.dtype = jnp.float32,
+        param_dtype: jnp.dtype = jnp.float32,
         *,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
@@ -500,12 +507,12 @@ class Encoder(nnx.Module):
             num_embeddings=enc_config.vocab_size,
             features=enc_config.hidden_size,
             dtype=self.compute_dtype,
-            param_dtype=self.compute_dtype,
+            param_dtype=param_dtype,
             rngs=rngs,
         )
         self.layers = [
             EncoderLayer(
-                config=self.config, compute_dtype=self.compute_dtype, rngs=rngs
+                config=self.config, compute_dtype=self.compute_dtype, param_dtype=param_dtype, rngs=rngs
             )
             for _ in range(enc_config.num_hidden_layers)
         ]
@@ -534,6 +541,7 @@ class DecoderLayer(nnx.Module):
         self,
         config: DiaConfig,
         compute_dtype: jnp.dtype = jnp.float32,
+        param_dtype: jnp.dtype = jnp.float32,
         *,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
@@ -576,6 +584,7 @@ class DecoderLayer(nnx.Module):
             num_kv_heads=dec_config.num_key_value_heads,
             head_dim=dec_config.head_dim,
             compute_dtype=self.compute_dtype,
+            param_dtype=param_dtype,
             out_embed_dim=dec_embed_dim,
             rngs=rngs,
         )
@@ -588,6 +597,7 @@ class DecoderLayer(nnx.Module):
             num_kv_heads=dec_config.cross_num_key_value_heads,
             head_dim=dec_config.cross_head_dim,
             compute_dtype=self.compute_dtype,
+            param_dtype=param_dtype,
             out_embed_dim=dec_embed_dim,
             rngs=rngs,
         )
@@ -596,6 +606,7 @@ class DecoderLayer(nnx.Module):
             embed_dim=dec_embed_dim,
             intermediate_dim=dec_config.intermediate_size,
             compute_dtype=self.compute_dtype,
+            param_dtype=param_dtype,
             rngs=rngs,
         )
 
@@ -651,6 +662,7 @@ class Decoder(nnx.Module):
         self,
         config: DiaConfig,
         compute_dtype: jnp.dtype = jnp.float32,
+        param_dtype: jnp.dtype = jnp.float32,
         *,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
@@ -665,14 +677,14 @@ class Decoder(nnx.Module):
                 num_embeddings=dec_config.vocab_size,
                 features=dec_config.hidden_size,
                 dtype=self.compute_dtype,
-                param_dtype=self.compute_dtype,
+                param_dtype=param_dtype,
                 rngs=rngs,
             )
             for _ in range(self.num_channels)
         ]
         self.layers = [
             DecoderLayer(
-                config=self.config, compute_dtype=self.compute_dtype, rngs=rngs
+                config=self.config, compute_dtype=self.compute_dtype, param_dtype=param_dtype, rngs=rngs
             )
             for _ in range(self.num_layers)
         ]
@@ -687,7 +699,7 @@ class Decoder(nnx.Module):
             out_features=(self.num_channels, dec_config.vocab_size),
             axis=(-1,),
             use_bias=False,
-            param_dtype=self.compute_dtype,
+            param_dtype=param_dtype,
             rngs=rngs,
         )
 
@@ -793,12 +805,18 @@ class DiaModel(nnx.Module):
         self,
         config: DiaConfig,
         compute_dtype: jnp.dtype = jnp.float32,
+        param_dtype: jnp.dtype = jnp.float32,
         *,
         rngs: nnx.Rngs = nnx.Rngs(0),
     ):
         self.config = config
         self.compute_dtype = compute_dtype
+        self.param_dtype = param_dtype
         self.rngs = rngs
 
-        self.encoder = Encoder(config=self.config, compute_dtype=self.compute_dtype)
-        self.decoder = Decoder(config=self.config, compute_dtype=self.compute_dtype)
+        self.encoder = Encoder(
+            config=self.config, compute_dtype=self.compute_dtype, param_dtype=self.param_dtype
+        )
+        self.decoder = Decoder(
+            config=self.config, compute_dtype=self.compute_dtype, param_dtype=self.param_dtype
+        )

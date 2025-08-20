@@ -162,16 +162,7 @@ class DecoderTrainingState:
         cross_attn_mask = create_attn_mask(
             dec_mask, enc_state.padding_mask, is_causal=False
         )
-        self_attn_cache = [
-            KVCacheTraining(
-                batch_size,
-                jax_config.decoder_num_key_value_heads,
-                max_audio_len,
-                jax_config.decoder_cross_head_dim,
-                compute_dtype,
-            )
-            for _ in range(jax_config.decoder_num_hidden_layers)
-        ]
+        self_attn_cache = [None for _ in range(jax_config.decoder_num_hidden_layers)]
 
         return cls(
             dtype=compute_dtype,

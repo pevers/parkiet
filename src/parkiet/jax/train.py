@@ -190,7 +190,7 @@ def compute_loss(
     return loss, metrics
 
 
-@nnx.jit(static_argnums=(3,))  # jax_config is static
+#@nnx.jit(static_argnums=(3,))  # jax_config is static
 def train_step(
     model: DiaModel,
     optimizer: nnx.Optimizer,
@@ -278,22 +278,24 @@ def main():
     dia_config = DiaConfig.load("config.test.json")
     if dia_config is None:
         raise ValueError("Failed to load model configuration")
-    compute_dtype = ComputeDtype.BFLOAT16
+    compute_dtype = ComputeDtype.FLOAT32
+    param_dtype = ComputeDtype.FLOAT32
 
     # Initialize model
     log.info("Initializing model...")
     # Load existing Dia weights
-    # dia = Dia.from_local(
-    #     config_path="config.json",
-    #     checkpoint_path=(Path("weights") / "checkpoint_2000").resolve().as_posix(),
-    #     compute_dtype=compute_dtype,
-    #     load_dac=False,  # Don't load DAC for training
-    # )
-    dia = Dia(
-        config=dia_config,
+    dia = Dia.from_local(
+        config_path="config.test.json",
+        checkpoint_path=(Path("weights") / "checkpoint_2000").resolve().as_posix(),
         compute_dtype=compute_dtype,
         load_dac=False,  # Don't load DAC for training
     )
+    # dia = Dia(
+    #     config=dia_config,
+    #     compute_dtype=compute_dtype,
+    #     param_dtype=param_dtype,
+    #     load_dac=False,  # Don't load DAC for training
+    # )
     # Create JAX-compatible config
     jax_config = JaxConfig(
         pad_token_id=dia_config.pad_token_id,

@@ -168,6 +168,7 @@ class Dia:
         self,
         config: DiaConfig,
         compute_dtype: str | ComputeDtype = ComputeDtype.FLOAT32,
+        param_dtype: str | ComputeDtype = ComputeDtype.FLOAT32,
         load_dac: bool = True,
     ):
         """Initializes the Dia model.
@@ -183,8 +184,11 @@ class Dia:
         self.config = config
         if isinstance(compute_dtype, str):
             compute_dtype = ComputeDtype(compute_dtype)
+        if isinstance(param_dtype, str):
+            param_dtype = ComputeDtype(param_dtype)
         self.compute_dtype = compute_dtype.to_dtype()
-        self.model: DiaModel = DiaModel(config, self.compute_dtype)
+        self.param_dtype = param_dtype.to_dtype()
+        self.model: DiaModel = DiaModel(config, self.compute_dtype, self.param_dtype)
         self.dac_model = None
         self.load_dac = load_dac
 
@@ -197,6 +201,7 @@ class Dia:
         config_path: str,
         checkpoint_path: str,
         compute_dtype: str | ComputeDtype = ComputeDtype.FLOAT32,
+        param_dtype: str | ComputeDtype = ComputeDtype.FLOAT32,
         load_dac: bool = True,
     ) -> "Dia":
         """Loads the Dia model from local configuration and checkpoint files using orbax.
@@ -218,7 +223,7 @@ class Dia:
         if config is None:
             raise FileNotFoundError(f"Config file not found at {config_path}")
 
-        dia = cls(config, compute_dtype, load_dac)
+        dia = cls(config, compute_dtype, param_dtype, load_dac)
 
         try:
             # Use orbax to load checkpoint
