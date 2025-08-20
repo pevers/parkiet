@@ -278,7 +278,7 @@ class Dia:
         max_len = self.config.encoder_config.max_position_embeddings
 
         byte_text = text.encode("utf-8")
-        replaced_bytes = byte_text.replace(b"[S1]", b"\x01").replace(b"[S2]", b"\x02")
+        replaced_bytes = byte_text.replace(b"[S1]", b"\x01").replace(b"[S2]", b"\x02").replace(b"[S3]", b"\x03").replace(b"[S4]", b"\x04")
         text_tokens = list(replaced_bytes)
 
         return jnp.array(text_tokens[:max_len], dtype=jnp.int32)
@@ -481,7 +481,7 @@ class Dia:
         mask_BxCxV = mask_BxCxV.at[
             batch_indices, channel_indices, top_k_indices_BxCxk
         ].set(False)
-        logits_BxCxV = jnp.where(mask_BxCxV, -jnp.inf, cond_logits_BxCxV)
+        logits_BxCxV = jnp.where(mask_BxCxV, -jnp.inf, logits_BxCxV)
 
         logits_BxCxV = logits_BxCxV.at[:, :, audio_eos_value + 1 :].set(-jnp.inf)
         logits_BxCxV = logits_BxCxV.at[:, 1:, audio_eos_value:].set(-jnp.inf)

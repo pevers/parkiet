@@ -23,18 +23,26 @@ from parkiet.jax.training_state import (
     EncoderTrainingState,
     TrainingDecoderOutput,
 )
-from parkiet.jax.audio import build_delay_indices, apply_audio_delay
+
+# Enable JAX compilation logging to monitor recompilation
+jax.config.update('jax_log_compiles', True)
+logging.getLogger('jax').setLevel(logging.INFO)
+
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 log = logging.getLogger(__name__)
 
+jax.config.update('jax_log_compiles', True)
+logging.getLogger('jax').setLevel(logging.INFO)
+
 
 @dataclass(frozen=True)
 class JaxConfig:
     pad_token_id: int
     bos_token_id: int
+    eos_token_id: int
     encoder_max_position_embeddings: int
     decoder_max_position_embeddings: int
     decoder_num_channels: int
@@ -90,7 +98,8 @@ def create_cosine_schedule_with_warmup(
 def compute_loss(
     model: DiaModel,
     text_tokens: jnp.ndarray,
-    audio_tokens: jnp.ndarray,
+    audio_input: jnp.ndarray,
+    audio_target: jnp.ndarray,
     jax_config: JaxConfig,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
     """
@@ -99,14 +108,14 @@ def compute_loss(
     Args:
         model: The DiaModel instance
         text_tokens: Text token ids [batch_size, text_seq_len]
-        audio_tokens: Audio token ids [batch_size, audio_seq_len, channels]
+        audio_input: Audio input tokens with BOS and delay pattern [batch_size, audio_seq_len+1, channels]
+        audio_target: Audio target tokens with EOS and delay pattern [batch_size, audio_seq_len+1, channels]
         jax_config: JAX configuration
 
     Returns:
         Tuple of (loss, metrics_dict)
     """
     batch_size = text_tokens.shape[0]
-    audio_pad_value = jax_config.pad_token_id
 
     # Encode text
     enc_state = EncoderTrainingState.new(
@@ -118,31 +127,14 @@ def compute_loss(
     dec_cross_attn_cache = model.decoder.precompute_cross_attn_cache(encoder_outputs)
 
     # Create decoder state
-    actual_seq_len = audio_tokens.shape[1]
+    audio_seq_len = audio_input.shape[1]  # T+1 (fixed length from dataset)
     dec_state = DecoderTrainingState.new(
         jax_config,
         enc_state,
         encoder_outputs,
         dec_cross_attn_cache,
         model.compute_dtype,
-        max_generation_length=actual_seq_len,
-    )
-
-    # Apply delay pattern to audio tokens
-    audio_seq_len = audio_tokens.shape[1]
-    num_channels = jax_config.decoder_num_channels
-
-    # Build delay indices for the input
-    delay_indices = build_delay_indices(
-        batch_size, audio_seq_len, num_channels, jax_config.delay_pattern
-    )
-
-    # Apply delay pattern to create shifted input
-    audio_input = apply_audio_delay(
-        audio_tokens,
-        pad_value=jax_config.pad_token_id,
-        bos_value=jax_config.bos_token_id,
-        precomp=delay_indices,
+        max_generation_length=audio_seq_len,
     )
 
     # Forward pass through decoder
@@ -153,63 +145,46 @@ def compute_loss(
     )
     dec_output.prefill(audio_input, [audio_input.shape[1]] * batch_size)
 
-    dec_step = audio_input.shape[1] - 1
+    # Prepare state for full sequence processing  
+    seq_len = audio_input.shape[1]  # T+1
+    dec_step = seq_len
     dec_state.prepare_step(0, dec_step)
-    tokens = dec_output.get_tokens_at(0, dec_step)
+    
+    # Get all tokens for the decoder (all T+1 positions)
+    tokens = dec_output.get_tokens_at(0, seq_len)
+    
+    # Forward pass
     decoder_outputs = model.decoder(tokens, dec_state)
 
     # Compute loss
-    # decoder_outputs: [batch_size, seq_len, channels, vocab_size]
-    # target: [batch_size, seq_len, channels]
+    # decoder_outputs: [batch_size, T+1, channels, vocab_size]
+    # audio_target: [batch_size, T+1, channels]
     vocab_size = decoder_outputs.shape[-1]
 
-    # Create target tokens by shifting the delayed input tokens by 1 position
-    # The decoder sees delayed_input[t] and should predict delayed_input[t+1]
-    audio_target = jnp.concatenate(
-        [
-            audio_input[:, 1:, :],  # Delayed input shifted by 1
-            jnp.full(
-                (batch_size, 1, num_channels),
-                jax_config.pad_token_id,
-                dtype=audio_input.dtype,
-            ),  # Add EOS/PAD
-        ],
-        axis=1,
-    )
-
-    # Ensure target sequence length matches decoder output
-    decoder_seq_len = decoder_outputs.shape[1]
-    audio_target = audio_target[:, :decoder_seq_len, :]
-
     # Reshape for cross-entropy loss
-    logits = decoder_outputs.reshape(-1, vocab_size)  # [B*S*C, V]
-    targets = audio_target.reshape(-1)  # [B*S*C]
-
-    # Create mask for valid tokens (ignore padding)
-    mask = targets != audio_pad_value
-
-    # Compute cross-entropy loss
+    logits = decoder_outputs.reshape(-1, vocab_size)  # [B*(T+1)*C, V]
+    targets = audio_target.reshape(-1)  # [B*(T+1)*C]
+    
+    # Create mask for non-padding tokens
+    pad_mask = targets != jax_config.pad_token_id  # [B*(T+1)*C]
+    
+    # Compute cross-entropy loss only for non-padding tokens
     log_probs = jax.nn.log_softmax(logits, axis=-1)
     one_hot_targets = jax.nn.one_hot(targets, vocab_size)
     loss_per_token = -jnp.sum(log_probs * one_hot_targets, axis=-1)
+    
+    # Apply mask and compute mean loss only over valid tokens
+    masked_loss = loss_per_token * pad_mask
+    loss = jnp.sum(masked_loss) / jnp.sum(pad_mask)
 
-    # Apply mask and compute mean loss
-    masked_loss = loss_per_token * mask
-    total_loss = jnp.sum(masked_loss)
-    total_tokens = jnp.sum(mask)
-
-    # Avoid division by zero
-    loss = jnp.where(total_tokens > 0, total_loss / total_tokens, 0.0)
-
-    # Compute accuracy
+    # Compute accuracy only for non-padding tokens
     predictions = jnp.argmax(logits, axis=-1)
-    correct = (predictions == targets) * mask
-    accuracy = jnp.where(total_tokens > 0, jnp.sum(correct) / total_tokens, 0.0)
+    correct = (predictions == targets) * pad_mask
+    accuracy = jnp.sum(correct) / jnp.sum(pad_mask)
 
     metrics = {
         "loss": loss,
-        "accuracy": accuracy,
-        "total_tokens": total_tokens,
+        "accuracy": accuracy
     }
 
     return loss, metrics
@@ -230,17 +205,14 @@ def train_step(
         optimizer: The optimizer
         batch: Batch of data
         pad_token_id: Padding token ID
-        bos_token_id: Beginning of sequence token ID
-        max_text_len: Maximum text length
-        num_channels: Number of audio channels
-        compute_dtype: Computation dtype (static)
+        jax_config: JAX configuration
 
     Returns:
         Tuple of (loss, metrics)
     """
 
     def loss_fn(model):
-        return compute_loss(model, batch["text"], batch["audio"], jax_config)
+        return compute_loss(model, batch["text"], batch["audio_input"], batch["audio_target"], jax_config)
 
     # Compute gradients
     (loss, metrics), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
@@ -262,16 +234,12 @@ def evaluate_step(
     Args:
         model: The model
         batch: Batch of data
-        pad_token_id: Padding token ID
-        bos_token_id: Beginning of sequence token ID
-        max_text_len: Maximum text length
-        num_channels: Number of audio channels
-        compute_dtype: Computation dtype
+        jax_config: JAX configuration
 
     Returns:
         Tuple of (loss, metrics)
     """
-    return compute_loss(model, batch["text"], batch["audio"], jax_config)
+    return compute_loss(model, batch["text"], batch["audio_input"], batch["audio_target"], jax_config)
 
 
 def save_checkpoint(
@@ -317,7 +285,7 @@ def main():
     # Load existing Dia weights
     # dia = Dia.from_local(
     #     config_path="config.json",
-    #     checkpoint_path=(Path("weights") / "jax-v1").resolve().as_posix(),
+    #     checkpoint_path=(Path("weights") / "checkpoint_2000").resolve().as_posix(),
     #     compute_dtype=compute_dtype,
     #     load_dac=False,  # Don't load DAC for training
     # )
@@ -330,6 +298,7 @@ def main():
     jax_config = JaxConfig(
         pad_token_id=dia_config.pad_token_id,
         bos_token_id=dia_config.bos_token_id,
+        eos_token_id=dia_config.eos_token_id,
         encoder_max_position_embeddings=dia_config.encoder_config.max_position_embeddings,
         decoder_max_position_embeddings=dia_config.decoder_config.max_position_embeddings,
         decoder_num_channels=dia_config.decoder_config.num_channels,
@@ -371,7 +340,7 @@ def main():
     train_loader = dataset.batch_iterator(
         batch_size=training_config.batch_size,
         shuffle=True,
-        use_weighted_sampling=True,
+        use_weighted_sampling=False,
     )
 
     # Initialize TensorBoard writer
@@ -408,10 +377,10 @@ def main():
             # Convert numpy arrays to JAX arrays
             jax_batch = {
                 "text": jnp.array(batch["text"]),
-                "audio": jnp.array(batch["audio"]),
+                "audio_input": jnp.array(batch["audio_input"]),
+                "audio_target": jnp.array(batch["audio_target"]),
             }
 
-            # Training step
             loss, metrics = train_step(model, optimizer, jax_batch, jax_config)
 
             batch_loss += loss / training_config.gradient_accumulation_steps

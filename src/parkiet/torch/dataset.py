@@ -5,6 +5,7 @@ import logging
 import random
 from collections.abc import Iterator
 from parkiet.dia.config import DiaConfig
+from parkiet.jax.audio import build_delay_indices, apply_audio_delay
 
 log = logging.getLogger(__name__)
 
@@ -75,6 +76,71 @@ class AudioTextDataset:
         self.text_length = config.encoder_config.max_position_embeddings
         self.audio_pad_value = config.pad_token_id
         self.channels = config.decoder_config.num_channels
+        
+        # Store token IDs for preprocessing
+        self.bos_token_id = config.bos_token_id
+        self.eos_token_id = config.eos_token_id
+        self.pad_token_id = config.pad_token_id
+        self.delay_pattern = config.delay_pattern
+
+    def _prepare_audio_sequence(self, audio_tokens: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Prepare audio sequence with BOS/EOS tokens and delay patterns.
+        
+        Args:
+            audio_tokens: Raw audio tokens [T, C]
+            
+        Returns:
+            Tuple of (input_sequence, target_sequence) both with shape [T+1, C]
+        """
+        # First add BOS/EOS tokens to the raw audio
+        # Add BOS token at the beginning: [BOS, audio_0, audio_1, ..., audio_T-1]
+        bos_tokens = np.full((1, self.channels), self.bos_token_id, dtype=audio_tokens.dtype)
+        input_sequence = np.concatenate([bos_tokens, audio_tokens], axis=0)  # [T+1, C]
+        
+        # Create target sequence: [audio_0, audio_1, ..., audio_T-1, EOS]
+        target_sequence = np.concatenate([audio_tokens, np.full((1, self.channels), self.eos_token_id, dtype=audio_tokens.dtype)], axis=0)  # [T+1, C]
+        
+        # Now pad or truncate to max length
+        current_len = input_sequence.shape[0]  # T+1
+        if current_len > self.max_audio_length:
+            input_sequence = input_sequence[:self.max_audio_length, :]
+            target_sequence = target_sequence[:self.max_audio_length, :]
+        elif current_len < self.max_audio_length:
+            padding = np.full(
+                (self.max_audio_length - current_len, self.channels),
+                self.pad_token_id,
+                dtype=audio_tokens.dtype
+            )
+            input_sequence = np.concatenate([input_sequence, padding], axis=0)
+            target_sequence = np.concatenate([target_sequence, padding], axis=0)
+        
+        # Apply delay pattern to both input and target
+        batch_size = 1  # Single sample
+        seq_len = input_sequence.shape[0]  # max_audio_length
+        
+        # Build delay indices once
+        delay_indices = build_delay_indices(
+            batch_size, seq_len, self.channels, self.delay_pattern
+        )
+        
+        # Apply delay to input sequence
+        input_delayed = apply_audio_delay(
+            input_sequence[None, :, :],  # Add batch dimension [1, max_len, C]
+            pad_value=-1,
+            bos_value=self.bos_token_id,
+            precomp=delay_indices,
+        )[0]  # Remove batch dimension back to [max_len, C]
+        
+        # Apply delay to target sequence
+        target_delayed = apply_audio_delay(
+            target_sequence[None, :, :],  # Add batch dimension [1, max_len, C]
+            pad_value=-1,
+            bos_value=self.bos_token_id,
+            precomp=delay_indices,
+        )[0]  # Remove batch dimension back to [max_len, C]
+        
+        return input_delayed, target_delayed
 
     def __len__(self) -> int:
         return len(self.df)
@@ -87,7 +153,7 @@ class AudioTextDataset:
             idx: Index of the sample
 
         Returns:
-            Dictionary containing 'text' and 'audio' numpy arrays
+            Dictionary containing 'text', 'audio_input', and 'audio_target' numpy arrays
         """
         row = self.df.iloc[idx]
 
@@ -106,18 +172,20 @@ class AudioTextDataset:
 
         # Apply text dropout for classifier-free guidance
         if random.random() < self.text_dropout_probability:
-            # Set all text tokens to pad value to drop text condition
-            pad_value = getattr(self.config, "text_pad_value", 0)
-            text_tokens.fill(pad_value)
+            text_tokens.fill(0)
 
         # Process audio
         audio_tokens = self._decode_audio(
             row["encoded_audio"], row["encoded_audio_shape"]
         )
+        
+        # Prepare input and target sequences with delay patterns
+        audio_input, audio_target = self._prepare_audio_sequence(audio_tokens)
 
         return {
             "text": text_tokens,
-            "audio": audio_tokens,
+            "audio_input": audio_input,  # [T+1, C] with BOS and delay pattern
+            "audio_target": audio_target,  # [T+1, C] with EOS and delay pattern
         }
 
     def _encode_text(self, text: str) -> np.ndarray:
@@ -128,7 +196,7 @@ class AudioTextDataset:
             text: Input text string
 
         Returns:
-            Encoded text array of shape [max_text_length]
+            Encoded text array of shape [max_text_length] (padded to full length)
         """
         # Convert to bytes and replace special tokens
         byte_text = text.encode("utf-8")
@@ -140,12 +208,13 @@ class AudioTextDataset:
         )
         text_tokens = list(replaced_bytes)
 
-        # Truncate or pad to max_text_length
+        # Truncate to max_text_length
         if len(text_tokens) > self.max_text_length:
             text_tokens = text_tokens[: self.max_text_length]
-        else:
-            # Pad with zeros (or pad token if available)
-            pad_value = getattr(self.config, "text_pad_value", 0)
+        
+        # Pad to max_text_length
+        if len(text_tokens) < self.max_text_length:
+            pad_value = 0
             text_tokens.extend([pad_value] * (self.max_text_length - len(text_tokens)))
 
         return np.array(text_tokens, dtype=np.int64)
@@ -174,25 +243,6 @@ class AudioTextDataset:
                 f"Audio array has {audio_array.shape[-1]} channels, "
                 f"but config expects {self.channels} channels"
             )
-
-        # Add EOS token before padding/truncating
-        eos_token = np.full(
-            (1, self.channels), self.config.eos_token_id, dtype=np.int64
-        )
-        audio_array = np.concatenate([audio_array, eos_token], axis=0)
-
-        # Pad or truncate audio to max_audio_length
-        current_length = audio_array.shape[0]
-        if current_length > self.max_audio_length:
-            # Truncate if too long
-            audio_array = audio_array[: self.max_audio_length]
-        elif current_length < self.max_audio_length:
-            # Pad if too short
-            pad_length = self.max_audio_length - current_length
-            pad_array = np.full(
-                (pad_length, self.channels), self.audio_pad_value, dtype=np.int64
-            )
-            audio_array = np.concatenate([audio_array, pad_array], axis=0)
 
         return audio_array
 
@@ -240,7 +290,7 @@ class AudioTextDataset:
             use_weighted_sampling: Whether to use speaker weight-based sampling
 
         Yields:
-            Batches of data as dictionaries with 'text' and 'audio' arrays
+            Batches of data as dictionaries with 'text', 'audio_input', and 'audio_target' arrays
         """
         num_samples = len(self)
 
@@ -261,16 +311,18 @@ class AudioTextDataset:
                 if len(batch_indices) < batch_size:
                     continue  # Skip incomplete batches
 
-                batch_data = {"text": [], "audio": []}
+                batch_data = {"text": [], "audio_input": [], "audio_target": []}
 
                 for idx in batch_indices:
                     sample = self[idx]
                     batch_data["text"].append(sample["text"])
-                    batch_data["audio"].append(sample["audio"])
+                    batch_data["audio_input"].append(sample["audio_input"])
+                    batch_data["audio_target"].append(sample["audio_target"])
 
                 # Convert to numpy arrays and stack
                 batch_data["text"] = np.stack(batch_data["text"], axis=0)
-                batch_data["audio"] = np.stack(batch_data["audio"], axis=0)
+                batch_data["audio_input"] = np.stack(batch_data["audio_input"], axis=0)
+                batch_data["audio_target"] = np.stack(batch_data["audio_target"], axis=0)
 
                 yield batch_data
 
@@ -280,8 +332,10 @@ def create_dataset(
     config: DiaConfig,
     max_audio_length: int | None = None,
     max_text_length: int | None = None,
-    transcript_clean_probability: float = 0.15,
-    text_dropout_probability: float = 0.15,
+
+    # TODO: CHANGE BACK WHEN TRAINING FR
+    transcript_clean_probability: float = 0.0,
+    text_dropout_probability: float = 0.0,
 ) -> AudioTextDataset:
     """
     Create an AudioTextDataset for JAX training.

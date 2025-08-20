@@ -16,27 +16,32 @@ from pathlib import Path
 #     cfg_scale=3.0,
 #     temperature=1.8,
 #     top_p=0.90,
-#     cfg_filter_top_k=50,
+#     cfg_filter_top_k=50
 # )
 
-# model.save_audio("simple.mp3", output)
+# model.save_audio("simple2.mp3", output)
 
-checkpoint_path = (Path("weights") / "training/checkpoint_1000").resolve()
+checkpoint_path = (Path("weights") / "checkpoint_2000").resolve()
 model = Dia.from_local(
     config_path="config.test.json",
     checkpoint_path=checkpoint_path.as_posix(),
-    compute_dtype="float32",
+    compute_dtype="bfloat16",
 )
 
-text = "[S1] als we kijken naar woonruimte dan is er eigenlijk een fixatie op groter. dus waar we in negentienhonderd gemiddeld tien vierkante meter woonruimte per persoon hadden is dat vandaag de dag drieënvijftig vierkante meter per persoon. [S2] even ter vergelijking. buurlanden als Duitsland en België hebben zevenenveertig vierkante meter per persoon. en in Oost-Europa is 't aantal vierkante meters nog een stuk lager. [S1] en uh we zijn voor die woningen ook meer grond gaan gebruiken."
+text = "[S1] nou ja het verwijt was natuurlijk het is te weinig en... [S2] ja."
+text_two = "[S1] nee dat uh die recessie ga je natuurlijk niet voorkomen met je met je werk. [S2] nee."
+text_three = "[S1] daarop aanhakend wat ik me nog echt kon herinneren was het moment dat ik voor 't eerst m'n bril opzette."
+text_four = "[S1] en hoe hoe uhm wat h wat zorgde d'rvoor dat je n stopte? [S2] de Detox-kuur en me me me vrijwillig aanmelden bij verslavingsklinieken omdat ik er omdat ik ervan af wilde. [S1] en waar bedoel..."
 
 output = model.generate(
-    text,
+    text_four,
     verbose=True,
     cfg_scale=0.0,
-    temperature=1.8,
-    top_p=0.90,
-    cfg_filter_top_k=50,
+    # To replicate with non-randomness
+    temperature=0.0,
+    top_p=1,
+    cfg_filter_top_k=None,
+    max_tokens=300,
 )
 
-model.save_audio("simple.mp3", output)
+model.save_audio("val.mp3", output)
