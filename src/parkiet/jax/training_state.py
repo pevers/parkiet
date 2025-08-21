@@ -1,73 +1,6 @@
 import jax.numpy as jnp
 from dataclasses import dataclass
-import flax.nnx as nnx
 from parkiet.jax.state import create_attn_mask
-
-
-class KVCacheTraining(nnx.Module):
-    """
-    JAX-friendly KV cache for training (smaller batch size, no CFG)
-    """
-
-    def __init__(
-        self,
-        batch_size: int,
-        num_heads: int,
-        max_len: int,
-        head_dim: int,
-        dtype: jnp.dtype,
-        k: jnp.ndarray | None = None,
-        v: jnp.ndarray | None = None,
-        *,
-        rngs: nnx.Rngs = nnx.Rngs(0),
-    ):
-        # Training uses single batch size (no CFG doubling)
-        shape = (batch_size, max_len, num_heads, head_dim)
-        if k is None:
-            k = jnp.zeros(shape, dtype=dtype)
-        if v is None:
-            v = jnp.zeros(shape, dtype=dtype)
-        self.k = nnx.Variable(k, rngs=rngs)
-        self.v = nnx.Variable(v, rngs=rngs)
-
-    @classmethod
-    def create(
-        cls,
-        batch_size: int,
-        num_heads: int,
-        max_len: int,
-        head_dim: int,
-        dtype: jnp.dtype,
-        *,
-        rngs: nnx.Rngs = nnx.Rngs(0),
-    ) -> "KVCacheTraining":
-        return cls(batch_size, num_heads, max_len, head_dim, dtype, rngs=rngs)
-
-    @classmethod
-    def from_kv(
-        cls, k: jnp.ndarray, v: jnp.ndarray, *, rngs: nnx.Rngs = nnx.Rngs(0)
-    ) -> "KVCacheTraining":
-        batch_size = k.shape[0]
-        max_len = k.shape[1]
-        num_heads = k.shape[2]
-        head_dim = k.shape[3]
-        dtype = k.dtype
-        return cls(batch_size, num_heads, max_len, head_dim, dtype, k=k, v=v, rngs=rngs)
-
-    def update(
-        self,
-        k: jnp.ndarray,  # [B, T, num_heads, head_dim]
-        v: jnp.ndarray,  # same shape
-        current_idx: int,
-    ) -> tuple[jnp.ndarray, jnp.ndarray]:
-        self.k.value = self.k.value.at[:, current_idx, :, :].set(k.squeeze(1))
-        self.v.value = self.v.value.at[:, current_idx, :, :].set(v.squeeze(1))
-        return self.k.value, self.v.value
-
-    def prefill(self, k: jnp.ndarray, v: jnp.ndarray):
-        length = k.shape[1]
-        self.k.value = self.k.value.at[:, :length, :, :].set(k)
-        self.v.value = self.v.value.at[:, :length, :, :].set(v)
 
 
 @dataclass
@@ -117,18 +50,17 @@ class DecoderTrainingState:
     enc_out: jnp.ndarray  # [B, Tenc, D]
     enc_positions: jnp.ndarray  # [1, Tenc]
     dec_positions: jnp.ndarray  # [1, Tdec]
-    self_attn_cache: list[KVCacheTraining]
-    cross_attn_cache: list[KVCacheTraining]
+    self_attn_cache: list[None]
+    cross_attn_cache: list[None]
     causal_attn_mask: jnp.ndarray  # [Tdec, Tdec]
     cross_attn_mask: jnp.ndarray  # [B, 1, Tdec, Tenc]
 
     @classmethod
     def new(
         cls,
-        jax_config,  # Using the JaxConfig from train.py
+        jax_config,
         enc_state: EncoderTrainingState,
         enc_out: jnp.ndarray,
-        dec_cross_attn_cache: list[KVCacheTraining],
         compute_dtype: jnp.dtype,
         max_generation_length: int | None = None,
     ) -> "DecoderTrainingState":
@@ -163,6 +95,7 @@ class DecoderTrainingState:
             dec_mask, enc_state.padding_mask, is_causal=False
         )
         self_attn_cache = [None for _ in range(jax_config.decoder_num_hidden_layers)]
+        cross_attn_cache = [None for _ in range(jax_config.decoder_num_hidden_layers)]
 
         return cls(
             dtype=compute_dtype,
@@ -170,7 +103,7 @@ class DecoderTrainingState:
             enc_positions=enc_state.positions,
             dec_positions=dec_positions,
             self_attn_cache=self_attn_cache,
-            cross_attn_cache=dec_cross_attn_cache,
+            cross_attn_cache=cross_attn_cache,
             causal_attn_mask=causal_mask,
             cross_attn_mask=cross_attn_mask,
         )

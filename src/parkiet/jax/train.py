@@ -5,6 +5,7 @@ JAX training loop implementation using flax nnx.
 import logging
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass
 import jax
@@ -25,17 +26,14 @@ from parkiet.jax.training_state import (
 )
 
 # Enable JAX compilation logging to monitor recompilation
-jax.config.update('jax_log_compiles', True)
-logging.getLogger('jax').setLevel(logging.INFO)
+jax.config.update("jax_log_compiles", True)
+logging.getLogger("jax").setLevel(logging.INFO)
 
 
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", force=True
 )
 log = logging.getLogger(__name__)
-
-jax.config.update('jax_log_compiles', True)
-logging.getLogger('jax').setLevel(logging.INFO)
 
 
 @dataclass(frozen=True)
@@ -46,9 +44,9 @@ class JaxConfig:
     encoder_max_position_embeddings: int
     decoder_max_position_embeddings: int
     decoder_num_channels: int
-    decoder_num_key_value_heads: int
     decoder_num_hidden_layers: int
-    decoder_cross_head_dim: int
+    decoder_head_dim: int
+    decoder_num_key_value_heads: int
     compute_dtype: jnp.dtype
     delay_pattern: tuple[int, ...]
 
@@ -60,7 +58,7 @@ class TrainingConfig:
         self.batch_size: int = kwargs.get("batch_size", 1)
         self.learning_rate: float = kwargs.get("learning_rate", 1e-4)
         self.warmup_steps: int = kwargs.get("warmup_steps", 100)
-        self.total_steps: int = kwargs.get("total_steps", 2000)
+        self.total_steps: int = kwargs.get("total_steps", 5000)
         self.gradient_accumulation_steps: int = kwargs.get(
             "gradient_accumulation_steps", 8
         )
@@ -71,7 +69,9 @@ class TrainingConfig:
         self.sample_every_steps: int = kwargs.get("sample_every_steps", 200)
         self.log_every: int = kwargs.get("log_every", 10)
         self.max_grad_norm: float = kwargs.get("max_grad_norm", 1.0)
-        self.log_dir: str = kwargs.get("log_dir", "logs")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_log_dir = f"logs/parkiet-{timestamp}"
+        self.log_dir: str = kwargs.get("log_dir", default_log_dir)
 
 
 def create_cosine_schedule_with_warmup(
@@ -123,16 +123,12 @@ def compute_loss(
     )
     encoder_outputs = model.encoder(text_tokens, enc_state)
 
-    # Precompute cross-attention cache
-    dec_cross_attn_cache = model.decoder.precompute_cross_attn_cache(encoder_outputs)
-
     # Create decoder state
     audio_seq_len = audio_input.shape[1]  # T+1 (fixed length from dataset)
     dec_state = DecoderTrainingState.new(
         jax_config,
         enc_state,
         encoder_outputs,
-        dec_cross_attn_cache,
         model.compute_dtype,
         max_generation_length=audio_seq_len,
     )
@@ -145,14 +141,14 @@ def compute_loss(
     )
     dec_output.prefill(audio_input, [audio_input.shape[1]] * batch_size)
 
-    # Prepare state for full sequence processing  
+    # Prepare state for full sequence processing
     seq_len = audio_input.shape[1]  # T+1
     dec_step = seq_len
     dec_state.prepare_step(0, dec_step)
-    
+
     # Get all tokens for the decoder (all T+1 positions)
     tokens = dec_output.get_tokens_at(0, seq_len)
-    
+
     # Forward pass
     decoder_outputs = model.decoder(tokens, dec_state)
 
@@ -160,37 +156,44 @@ def compute_loss(
     # decoder_outputs: [batch_size, T+1, channels, vocab_size]
     # audio_target: [batch_size, T+1, channels]
     vocab_size = decoder_outputs.shape[-1]
+    num_channels = decoder_outputs.shape[2]
 
     # Reshape for cross-entropy loss
     logits = decoder_outputs.reshape(-1, vocab_size)  # [B*(T+1)*C, V]
     targets = audio_target.reshape(-1)  # [B*(T+1)*C]
-    
+
     # Create mask for non-padding tokens
     pad_mask = targets != jax_config.pad_token_id  # [B*(T+1)*C]
-    
+
+    # Create channel weights - 4x weight for first level (channel 0)
+    channel_indices = jnp.tile(
+        jnp.arange(num_channels), batch_size * (audio_target.shape[1])
+    )  # [B*(T+1)*C]
+    channel_weights = jnp.where(
+        channel_indices == 0, 4.0, 1.0
+    )  # 4x weight for channel 0
+
     # Compute cross-entropy loss only for non-padding tokens
     log_probs = jax.nn.log_softmax(logits, axis=-1)
     one_hot_targets = jax.nn.one_hot(targets, vocab_size)
     loss_per_token = -jnp.sum(log_probs * one_hot_targets, axis=-1)
-    
-    # Apply mask and compute mean loss only over valid tokens
-    masked_loss = loss_per_token * pad_mask
-    loss = jnp.sum(masked_loss) / jnp.sum(pad_mask)
+
+    # Apply mask and channel weights, then compute weighted mean loss
+    weighted_masked_loss = loss_per_token * pad_mask * channel_weights
+    weighted_mask_sum = jnp.sum(pad_mask * channel_weights)
+    loss = jnp.sum(weighted_masked_loss) / weighted_mask_sum
 
     # Compute accuracy only for non-padding tokens
     predictions = jnp.argmax(logits, axis=-1)
     correct = (predictions == targets) * pad_mask
     accuracy = jnp.sum(correct) / jnp.sum(pad_mask)
 
-    metrics = {
-        "loss": loss,
-        "accuracy": accuracy
-    }
+    metrics = {"loss": loss, "accuracy": accuracy}
 
     return loss, metrics
 
 
-#@nnx.jit(static_argnums=(3,))  # jax_config is static
+@nnx.jit(static_argnums=(3,))  # jax_config is static
 def train_step(
     model: DiaModel,
     optimizer: nnx.Optimizer,
@@ -212,7 +215,13 @@ def train_step(
     """
 
     def loss_fn(model):
-        return compute_loss(model, batch["text"], batch["audio_input"], batch["audio_target"], jax_config)
+        return compute_loss(
+            model,
+            batch["text"],
+            batch["audio_input"],
+            batch["audio_target"],
+            jax_config,
+        )
 
     # Compute gradients
     (loss, metrics), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
@@ -239,7 +248,9 @@ def evaluate_step(
     Returns:
         Tuple of (loss, metrics)
     """
-    return compute_loss(model, batch["text"], batch["audio_input"], batch["audio_target"], jax_config)
+    return compute_loss(
+        model, batch["text"], batch["audio_input"], batch["audio_target"], jax_config
+    )
 
 
 def save_checkpoint(
@@ -284,18 +295,38 @@ def main():
     # Initialize model
     log.info("Initializing model...")
     # Load existing Dia weights
-    dia = Dia.from_local(
-        config_path="config.test.json",
-        checkpoint_path=(Path("weights") / "checkpoint_2000").resolve().as_posix(),
-        compute_dtype=compute_dtype,
-        load_dac=False,  # Don't load DAC for training
-    )
-    # dia = Dia(
-    #     config=dia_config,
+    # dia = Dia.from_local(
+    #     config_path="config.test.json",
+    #     checkpoint_path=(Path("weights") / "checkpoint_1000").resolve().as_posix(),
     #     compute_dtype=compute_dtype,
-    #     param_dtype=param_dtype,
     #     load_dac=False,  # Don't load DAC for training
     # )
+    dia = Dia(
+        config=dia_config,
+        compute_dtype=compute_dtype,
+        param_dtype=param_dtype,
+        load_dac=False,  # Don't load DAC for training
+    )
+
+    # Log model size and parameter count
+    model = dia.model
+    model_stats = dia.get_model_stats()
+
+    log.info(f"Model initialized with {model_stats['total_params']:,} parameters")
+    log.info(f"Estimated model size: {model_stats['param_size_mb']:.2f} MB")
+    log.info(f"Compute dtype: {compute_dtype}")
+    log.info(f"Parameter dtype: {param_dtype}")
+    log.info(
+        f"Encoder max position embeddings: {dia_config.encoder_config.max_position_embeddings}"
+    )
+    log.info(
+        f"Decoder max position embeddings: {dia_config.decoder_config.max_position_embeddings}"
+    )
+    log.info(f"Decoder channels: {dia_config.decoder_config.num_channels}")
+    log.info(f"Decoder layers: {dia_config.decoder_config.num_hidden_layers}")
+    log.info(f"Decoder head dim: {dia_config.decoder_config.head_dim}")
+    log.info(f"Decoder KV heads: {dia_config.decoder_config.num_key_value_heads}")
+
     # Create JAX-compatible config
     jax_config = JaxConfig(
         pad_token_id=dia_config.pad_token_id,
@@ -304,9 +335,9 @@ def main():
         encoder_max_position_embeddings=dia_config.encoder_config.max_position_embeddings,
         decoder_max_position_embeddings=dia_config.decoder_config.max_position_embeddings,
         decoder_num_channels=dia_config.decoder_config.num_channels,
-        decoder_num_key_value_heads=dia_config.decoder_config.num_key_value_heads,
         decoder_num_hidden_layers=dia_config.decoder_config.num_hidden_layers,
-        decoder_cross_head_dim=dia_config.decoder_config.cross_head_dim,
+        decoder_head_dim=dia_config.decoder_config.head_dim,
+        decoder_num_key_value_heads=dia_config.decoder_config.num_key_value_heads,
         # Convert to tuple to make it hashable
         delay_pattern=tuple(dia_config.delay_pattern),
         compute_dtype=compute_dtype.to_dtype(),
@@ -345,11 +376,7 @@ def main():
         use_weighted_sampling=False,
     )
 
-    # Initialize TensorBoard writer
-    log.info("Initializing TensorBoard writer...")
     writer = SummaryWriter(log_dir=training_config.log_dir)
-
-    # Log configuration
     writer.add_text("Config/Training", str(vars(training_config)))
 
     # Training loop
@@ -360,7 +387,9 @@ def main():
     running_loss = 0.0
     running_accuracy = 0.0
 
-    pbar = tqdm(range(training_config.total_steps), desc="Training")
+    pbar = tqdm(
+        range(training_config.total_steps), desc="Training", leave=True, position=0
+    )
 
     for step in pbar:
         step_start_time = time.time()
@@ -407,7 +436,7 @@ def main():
         # Log metrics
         if step % training_config.log_every == 0:
             step_time = time.time() - step_start_time
-            log.info(
+            pbar.write(
                 f"Step {step}: loss={batch_loss:.4f}, acc={batch_accuracy:.4f}, "
                 f"lr={current_lr:.6f}, time={step_time:.3f}s"
             )

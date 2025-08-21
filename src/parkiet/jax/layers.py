@@ -211,13 +211,20 @@ class CrossAttention(nnx.Module):
         | None = None,  # None in Decoder Self Attention, Valid mask in Others
         cache: KVCache | None = None,
         is_causal: bool = False,
+        encoder_output: jnp.ndarray | None = None,  # (B, S, E) for cross-attention
     ) -> jnp.ndarray:
         if kv_positions is None:
             kv_positions = q_positions
         original_dtype = Xq.dtype
 
         Xq_BxNxTxH = self.q_proj(Xq)
-        attn_k, attn_v = cache.k, cache.v
+
+        if cache is not None:
+            attn_k, attn_v = cache.k, cache.v
+        else:
+            k = self.k_proj(encoder_output)
+            v = self.v_proj(encoder_output)
+            attn_k, attn_v = k, v
 
         attn_output = dot_product_attention(
             query=Xq_BxNxTxH,
@@ -512,7 +519,10 @@ class Encoder(nnx.Module):
         )
         self.layers = [
             EncoderLayer(
-                config=self.config, compute_dtype=self.compute_dtype, param_dtype=param_dtype, rngs=rngs
+                config=self.config,
+                compute_dtype=self.compute_dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
             )
             for _ in range(enc_config.num_hidden_layers)
         ]
@@ -642,6 +652,7 @@ class DecoderLayer(nnx.Module):
             kv_positions=state.enc_positions,
             attn_mask=state.cross_attn_mask,
             cache=cross_attn_cache,
+            encoder_output=state.enc_out,
         )
         x = residual + ca_out
         residual = x
@@ -684,7 +695,10 @@ class Decoder(nnx.Module):
         ]
         self.layers = [
             DecoderLayer(
-                config=self.config, compute_dtype=self.compute_dtype, param_dtype=param_dtype, rngs=rngs
+                config=self.config,
+                compute_dtype=self.compute_dtype,
+                param_dtype=param_dtype,
+                rngs=rngs,
             )
             for _ in range(self.num_layers)
         ]
@@ -815,8 +829,12 @@ class DiaModel(nnx.Module):
         self.rngs = rngs
 
         self.encoder = Encoder(
-            config=self.config, compute_dtype=self.compute_dtype, param_dtype=self.param_dtype
+            config=self.config,
+            compute_dtype=self.compute_dtype,
+            param_dtype=self.param_dtype,
         )
         self.decoder = Decoder(
-            config=self.config, compute_dtype=self.compute_dtype, param_dtype=self.param_dtype
+            config=self.config,
+            compute_dtype=self.compute_dtype,
+            param_dtype=self.param_dtype,
         )

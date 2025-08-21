@@ -283,7 +283,12 @@ class Dia:
         max_len = self.config.encoder_config.max_position_embeddings
 
         byte_text = text.encode("utf-8")
-        replaced_bytes = byte_text.replace(b"[S1]", b"\x01").replace(b"[S2]", b"\x02").replace(b"[S3]", b"\x03").replace(b"[S4]", b"\x04")
+        replaced_bytes = (
+            byte_text.replace(b"[S1]", b"\x01")
+            .replace(b"[S2]", b"\x02")
+            .replace(b"[S3]", b"\x03")
+            .replace(b"[S4]", b"\x04")
+        )
         text_tokens = list(replaced_bytes)
 
         return jnp.array(text_tokens[:max_len], dtype=jnp.int32)
@@ -628,6 +633,25 @@ class Dia:
         import soundfile as sf
 
         sf.write(path, audio, DEFAULT_SAMPLE_RATE)
+
+    def get_model_stats(self) -> dict[str, int | float]:
+        """Get model statistics including parameter count and size.
+
+        Returns:
+            Dictionary containing:
+                - total_params: Total number of parameters
+                - param_size_mb: Estimated model size in MB
+        """
+        _, state = nnx.split(self.model)
+        state_dict = nnx.to_pure_dict(state)
+
+        # Count parameters
+        param_count = sum(x.size for x in jax.tree_util.tree_leaves(state_dict))
+
+        # Calculate model size in MB (assuming float32)
+        param_size_mb = param_count * 4 / (1024 * 1024)
+
+        return {"total_params": param_count, "param_size_mb": param_size_mb}
 
     def generate(
         self,
