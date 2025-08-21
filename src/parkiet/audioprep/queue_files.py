@@ -14,6 +14,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+
 def queue_audio_file(
     gcs_audio_path: str,
     queue_name: str = "audio_processing",
@@ -181,8 +182,7 @@ Examples:
     )
 
     parser.add_argument(
-        "input_path",
-        help="GCS path to audio file or file containing GCS paths"
+        "input_path", help="GCS path to audio file or file containing GCS paths"
     )
     parser.add_argument(
         "--queue-name",
@@ -219,7 +219,7 @@ Examples:
         args.skip_start,
         args.skip_end,
     )
-    
+
     if args.input_path.startswith("gs://"):
         # Single file case - count is already logged in process_input
         pass

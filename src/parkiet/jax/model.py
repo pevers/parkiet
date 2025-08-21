@@ -168,6 +168,7 @@ class Dia:
         self,
         config: DiaConfig,
         compute_dtype: str | ComputeDtype = ComputeDtype.FLOAT32,
+        param_dtype: str | ComputeDtype = ComputeDtype.FLOAT32,
         load_dac: bool = True,
     ):
         """Initializes the Dia model.
@@ -183,8 +184,11 @@ class Dia:
         self.config = config
         if isinstance(compute_dtype, str):
             compute_dtype = ComputeDtype(compute_dtype)
+        if isinstance(param_dtype, str):
+            param_dtype = ComputeDtype(param_dtype)
         self.compute_dtype = compute_dtype.to_dtype()
-        self.model: DiaModel = DiaModel(config, self.compute_dtype)
+        self.param_dtype = param_dtype.to_dtype()
+        self.model: DiaModel = DiaModel(config, self.compute_dtype, self.param_dtype)
         self.dac_model = None
         self.load_dac = load_dac
 
@@ -197,6 +201,7 @@ class Dia:
         config_path: str,
         checkpoint_path: str,
         compute_dtype: str | ComputeDtype = ComputeDtype.FLOAT32,
+        param_dtype: str | ComputeDtype = ComputeDtype.FLOAT32,
         load_dac: bool = True,
     ) -> "Dia":
         """Loads the Dia model from local configuration and checkpoint files using orbax.
@@ -218,7 +223,7 @@ class Dia:
         if config is None:
             raise FileNotFoundError(f"Config file not found at {config_path}")
 
-        dia = cls(config, compute_dtype, load_dac)
+        dia = cls(config, compute_dtype, param_dtype, load_dac)
 
         try:
             # Use orbax to load checkpoint
@@ -278,7 +283,12 @@ class Dia:
         max_len = self.config.encoder_config.max_position_embeddings
 
         byte_text = text.encode("utf-8")
-        replaced_bytes = byte_text.replace(b"[S1]", b"\x01").replace(b"[S2]", b"\x02")
+        replaced_bytes = (
+            byte_text.replace(b"[S1]", b"\x01")
+            .replace(b"[S2]", b"\x02")
+            .replace(b"[S3]", b"\x03")
+            .replace(b"[S4]", b"\x04")
+        )
         text_tokens = list(replaced_bytes)
 
         return jnp.array(text_tokens[:max_len], dtype=jnp.int32)
@@ -481,7 +491,7 @@ class Dia:
         mask_BxCxV = mask_BxCxV.at[
             batch_indices, channel_indices, top_k_indices_BxCxk
         ].set(False)
-        logits_BxCxV = jnp.where(mask_BxCxV, -jnp.inf, cond_logits_BxCxV)
+        logits_BxCxV = jnp.where(mask_BxCxV, -jnp.inf, logits_BxCxV)
 
         logits_BxCxV = logits_BxCxV.at[:, :, audio_eos_value + 1 :].set(-jnp.inf)
         logits_BxCxV = logits_BxCxV.at[:, 1:, audio_eos_value:].set(-jnp.inf)
@@ -624,6 +634,25 @@ class Dia:
 
         sf.write(path, audio, DEFAULT_SAMPLE_RATE)
 
+    def get_model_stats(self) -> dict[str, int | float]:
+        """Get model statistics including parameter count and size.
+
+        Returns:
+            Dictionary containing:
+                - total_params: Total number of parameters
+                - param_size_mb: Estimated model size in MB
+        """
+        _, state = nnx.split(self.model)
+        state_dict = nnx.to_pure_dict(state)
+
+        # Count parameters
+        param_count = sum(x.size for x in jax.tree_util.tree_leaves(state_dict))
+
+        # Calculate model size in MB (assuming float32)
+        param_size_mb = param_count * 4 / (1024 * 1024)
+
+        return {"total_params": param_count, "param_size_mb": param_size_mb}
+
     def generate(
         self,
         text: str | list[str],
@@ -660,7 +689,6 @@ class Dia:
                           Can be a file path (str), a pre-loaded tensor (DAC codes), or None.
                           If a list, its length must match the batch size of the text input.
             audio_prompt_path: (Deprecated) Use `audio_prompt` instead.
-            use_cfg_filter: (Deprecated) This parameter is no longer used.
             verbose: If True, prints progress information during generation, including
                      speed metrics.
 

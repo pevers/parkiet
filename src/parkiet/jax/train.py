@@ -3,48 +3,75 @@ JAX training loop implementation using flax nnx.
 """
 
 import logging
+import os
 import time
+from datetime import datetime
 from pathlib import Path
+from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
 import optax
 from tqdm import tqdm
 import orbax.checkpoint as ocp
-
+from torch.utils.tensorboard import SummaryWriter
 from parkiet.dia.config import DiaConfig
 from parkiet.jax.model import Dia, ComputeDtype
 from parkiet.jax.layers import DiaModel
-from parkiet.jax.dataset import create_dummy_dataloader
-from parkiet.jax.state import (
+from parkiet.torch.dataset import create_dataset
+from parkiet.jax.training_state import (
     DecoderTrainingState,
     EncoderTrainingState,
-    DecoderOutput,
-    DecoderInferenceState,
+    TrainingDecoderOutput,
 )
 
+# Enable JAX compilation logging to monitor recompilation
+jax.config.update("jax_log_compiles", True)
+logging.getLogger("jax").setLevel(logging.INFO)
+
+
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s", force=True
 )
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class JaxConfig:
+    pad_token_id: int
+    bos_token_id: int
+    eos_token_id: int
+    encoder_max_position_embeddings: int
+    decoder_max_position_embeddings: int
+    decoder_num_channels: int
+    decoder_num_hidden_layers: int
+    decoder_head_dim: int
+    decoder_num_key_value_heads: int
+    compute_dtype: jnp.dtype
+    delay_pattern: tuple[int, ...]
 
 
 class TrainingConfig:
     """Configuration for training parameters."""
 
     def __init__(self, **kwargs):
-        self.batch_size: int = kwargs.get("batch_size", 8)
+        self.batch_size: int = kwargs.get("batch_size", 1)
         self.learning_rate: float = kwargs.get("learning_rate", 1e-4)
         self.warmup_steps: int = kwargs.get("warmup_steps", 100)
-        self.total_steps: int = kwargs.get("total_steps", 2000)
+        self.total_steps: int = kwargs.get("total_steps", 5000)
         self.gradient_accumulation_steps: int = kwargs.get(
             "gradient_accumulation_steps", 8
         )
-        self.checkpoint_dir: str = kwargs.get("checkpoint_dir", "weights_jax")
+        self.checkpoint_dir: str = os.path.abspath(
+            kwargs.get("checkpoint_dir", "weights")
+        )
         self.checkpoint_every_steps: int = kwargs.get("checkpoint_every_steps", 500)
-        self.sample_every_steps: int = kwargs.get("sample_every_steps", 500)
+        self.sample_every_steps: int = kwargs.get("sample_every_steps", 200)
         self.log_every: int = kwargs.get("log_every", 10)
         self.max_grad_norm: float = kwargs.get("max_grad_norm", 1.0)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_log_dir = f"logs/parkiet-{timestamp}"
+        self.log_dir: str = kwargs.get("log_dir", default_log_dir)
 
 
 def create_cosine_schedule_with_warmup(
@@ -56,13 +83,14 @@ def create_cosine_schedule_with_warmup(
     """Create a cosine learning rate schedule with warmup."""
 
     def schedule_fn(step):
-        if step < warmup_steps:
-            return learning_rate * step / warmup_steps
+        warmup_lr = learning_rate * step / warmup_steps
 
         progress = (step - warmup_steps) / (total_steps - warmup_steps)
-        return (
+        cosine_lr = (
             learning_rate * 0.5 * (1.0 + jnp.cos(jnp.pi * num_cycles * 2.0 * progress))
         )
+
+        return jnp.where(step < warmup_steps, warmup_lr, cosine_lr)
 
     return schedule_fn
 
@@ -70,9 +98,9 @@ def create_cosine_schedule_with_warmup(
 def compute_loss(
     model: DiaModel,
     text_tokens: jnp.ndarray,
-    audio_tokens: jnp.ndarray,
-    config: DiaConfig,
-    compute_dtype: jnp.dtype,
+    audio_input: jnp.ndarray,
+    audio_target: jnp.ndarray,
+    jax_config: JaxConfig,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
     """
     Compute the loss for a batch of data using teacher forcing.
@@ -80,119 +108,97 @@ def compute_loss(
     Args:
         model: The DiaModel instance
         text_tokens: Text token ids [batch_size, text_seq_len]
-        audio_tokens: Audio token ids [batch_size, audio_seq_len, channels]
-        config: Model configuration
-        compute_dtype: Computation dtype
+        audio_input: Audio input tokens with BOS and delay pattern [batch_size, audio_seq_len+1, channels]
+        audio_target: Audio target tokens with EOS and delay pattern [batch_size, audio_seq_len+1, channels]
+        jax_config: JAX configuration
 
     Returns:
         Tuple of (loss, metrics_dict)
     """
     batch_size = text_tokens.shape[0]
-    audio_pad_value = config.pad_token_id
-
-    # Pad text input if needed
-    max_text_len = config.encoder_config.max_position_embeddings
-    if text_tokens.shape[1] < max_text_len:
-        padding = jnp.zeros(
-            (batch_size, max_text_len - text_tokens.shape[1]), dtype=text_tokens.dtype
-        )
-        text_tokens = jnp.concatenate([text_tokens, padding], axis=1)
 
     # Encode text
-    enc_state = EncoderTrainingState.new(config, text_tokens)
-    encoder_outputs = model.encoder(text_tokens, enc_state)  # type: ignore
-
-    # Precompute cross-attention cache
-    dec_cross_attn_cache = model.decoder.precompute_cross_attn_cache(encoder_outputs)
+    enc_state = EncoderTrainingState.new(
+        jax_config.encoder_max_position_embeddings, text_tokens
+    )
+    encoder_outputs = model.encoder(text_tokens, enc_state)
 
     # Create decoder state
-    actual_seq_len = audio_tokens.shape[1]
+    audio_seq_len = audio_input.shape[1]  # T+1 (fixed length from dataset)
     dec_state = DecoderTrainingState.new(
-        config,
+        jax_config,
         enc_state,
         encoder_outputs,
-        dec_cross_attn_cache,
-        compute_dtype,
-        max_generation_length=actual_seq_len,
+        model.compute_dtype,
+        max_generation_length=audio_seq_len,
     )
-
-    # Prepare audio input (add BOS token)
-    audio_bos_value = config.bos_token_id
-    bos_tokens = jnp.full(
-        (batch_size, 1, config.decoder_config.num_channels),
-        audio_bos_value,
-        dtype=audio_tokens.dtype,
-    )
-    audio_input = jnp.concatenate([bos_tokens, audio_tokens[:, :-1, :]], axis=1)
 
     # Forward pass through decoder
-    dec_output = DecoderOutput.new(batch_size, config)
+    dec_output = TrainingDecoderOutput.new(
+        batch_size,
+        jax_config.decoder_max_position_embeddings,
+        jax_config.decoder_num_channels,
+    )
     dec_output.prefill(audio_input, [audio_input.shape[1]] * batch_size)
 
-    dec_step = audio_input.shape[1] - 1
+    # Prepare state for full sequence processing
+    seq_len = audio_input.shape[1]  # T+1
+    dec_step = seq_len
     dec_state.prepare_step(0, dec_step)
-    tokens = dec_output.get_tokens_at(0, dec_step)
 
-    # Create inference state with same data but compatible type
-    inference_state = DecoderInferenceState(
-        dtype=dec_state.dtype,
-        enc_out=dec_state.enc_out,
-        enc_positions=dec_state.enc_positions,
-        dec_positions=dec_state.dec_positions,
-        self_attn_cache=dec_state.self_attn_cache
-        or dec_state.cross_attn_cache,  # Use cross_attn_cache as fallback
-        cross_attn_cache=dec_state.cross_attn_cache,
-        causal_attn_mask=dec_state.causal_attn_mask,
-        cross_attn_mask=dec_state.cross_attn_mask,
-    )
+    # Get all tokens for the decoder (all T+1 positions)
+    tokens = dec_output.get_tokens_at(0, seq_len)
 
-    decoder_outputs = model.decoder(tokens, inference_state)
+    # Forward pass
+    decoder_outputs = model.decoder(tokens, dec_state)
 
     # Compute loss
-    # decoder_outputs: [batch_size, seq_len, channels, vocab_size]
-    # target: [batch_size, seq_len, channels]
+    # decoder_outputs: [batch_size, T+1, channels, vocab_size]
+    # audio_target: [batch_size, T+1, channels]
     vocab_size = decoder_outputs.shape[-1]
+    num_channels = decoder_outputs.shape[2]
 
     # Reshape for cross-entropy loss
-    logits = decoder_outputs.reshape(-1, vocab_size)  # [B*S*C, V]
-    targets = audio_tokens.reshape(-1)  # [B*S*C]
+    logits = decoder_outputs.reshape(-1, vocab_size)  # [B*(T+1)*C, V]
+    targets = audio_target.reshape(-1)  # [B*(T+1)*C]
 
-    # Create mask for valid tokens (ignore padding)
-    mask = targets != audio_pad_value
+    # Create mask for non-padding tokens
+    pad_mask = targets != jax_config.pad_token_id  # [B*(T+1)*C]
 
-    # Compute cross-entropy loss
+    # Create channel weights - 4x weight for first level (channel 0)
+    channel_indices = jnp.tile(
+        jnp.arange(num_channels), batch_size * (audio_target.shape[1])
+    )  # [B*(T+1)*C]
+    channel_weights = jnp.where(
+        channel_indices == 0, 4.0, 1.0
+    )  # 4x weight for channel 0
+
+    # Compute cross-entropy loss only for non-padding tokens
     log_probs = jax.nn.log_softmax(logits, axis=-1)
     one_hot_targets = jax.nn.one_hot(targets, vocab_size)
     loss_per_token = -jnp.sum(log_probs * one_hot_targets, axis=-1)
 
-    # Apply mask and compute mean loss
-    masked_loss = loss_per_token * mask
-    total_loss = jnp.sum(masked_loss)
-    total_tokens = jnp.sum(mask)
+    # Apply mask and channel weights, then compute weighted mean loss
+    weighted_masked_loss = loss_per_token * pad_mask * channel_weights
+    weighted_mask_sum = jnp.sum(pad_mask * channel_weights)
+    loss = jnp.sum(weighted_masked_loss) / weighted_mask_sum
 
-    # Avoid division by zero
-    loss = jnp.where(total_tokens > 0, total_loss / total_tokens, 0.0)
-
-    # Compute accuracy
+    # Compute accuracy only for non-padding tokens
     predictions = jnp.argmax(logits, axis=-1)
-    correct = (predictions == targets) * mask
-    accuracy = jnp.where(total_tokens > 0, jnp.sum(correct) / total_tokens, 0.0)
+    correct = (predictions == targets) * pad_mask
+    accuracy = jnp.sum(correct) / jnp.sum(pad_mask)
 
-    metrics = {
-        "loss": loss,
-        "accuracy": accuracy,
-        "total_tokens": total_tokens,
-    }
+    metrics = {"loss": loss, "accuracy": accuracy}
 
     return loss, metrics
 
 
+@nnx.jit(static_argnums=(3,))  # jax_config is static
 def train_step(
     model: DiaModel,
     optimizer: nnx.Optimizer,
     batch: dict[str, jnp.ndarray],
-    config: DiaConfig,
-    compute_dtype: jnp.dtype,
+    jax_config: JaxConfig,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
     """
     Perform a single training step.
@@ -201,15 +207,21 @@ def train_step(
         model: The model
         optimizer: The optimizer
         batch: Batch of data
-        config: Model configuration
-        compute_dtype: Computation dtype
+        pad_token_id: Padding token ID
+        jax_config: JAX configuration
 
     Returns:
         Tuple of (loss, metrics)
     """
 
     def loss_fn(model):
-        return compute_loss(model, batch["text"], batch["audio"], config, compute_dtype)
+        return compute_loss(
+            model,
+            batch["text"],
+            batch["audio_input"],
+            batch["audio_target"],
+            jax_config,
+        )
 
     # Compute gradients
     (loss, metrics), grads = nnx.value_and_grad(loss_fn, has_aux=True)(model)
@@ -223,8 +235,7 @@ def train_step(
 def evaluate_step(
     model: DiaModel,
     batch: dict[str, jnp.ndarray],
-    config: DiaConfig,
-    compute_dtype: jnp.dtype,
+    jax_config: JaxConfig,
 ) -> tuple[jnp.ndarray, dict[str, jnp.ndarray]]:
     """
     Perform a single evaluation step.
@@ -232,13 +243,14 @@ def evaluate_step(
     Args:
         model: The model
         batch: Batch of data
-        config: Model configuration
-        compute_dtype: Computation dtype
+        jax_config: JAX configuration
 
     Returns:
         Tuple of (loss, metrics)
     """
-    return compute_loss(model, batch["text"], batch["audio"], config, compute_dtype)
+    return compute_loss(
+        model, batch["text"], batch["audio_input"], batch["audio_target"], jax_config
+    )
 
 
 def save_checkpoint(
@@ -258,7 +270,7 @@ def save_checkpoint(
     checkpoint_path.mkdir(parents=True, exist_ok=True)
 
     # Get model state
-    graphdef, state = nnx.split(model)
+    _, state = nnx.split(model)
     state_dict = nnx.to_pure_dict(state)
 
     # Save checkpoint
@@ -271,22 +283,64 @@ def save_checkpoint(
 
 def main():
     """Main training function."""
-    # Configuration
     training_config = TrainingConfig()
 
     # Load model configuration
     dia_config = DiaConfig.load("config.test.json")
     if dia_config is None:
         raise ValueError("Failed to load model configuration")
-    compute_dtype = ComputeDtype.BFLOAT16
+    compute_dtype = ComputeDtype.FLOAT32
+    param_dtype = ComputeDtype.FLOAT32
 
     # Initialize model
     log.info("Initializing model...")
-    rngs = nnx.Rngs(0)
+    # Load existing Dia weights
+    # dia = Dia.from_local(
+    #     config_path="config.test.json",
+    #     checkpoint_path=(Path("weights") / "checkpoint_1000").resolve().as_posix(),
+    #     compute_dtype=compute_dtype,
+    #     load_dac=False,  # Don't load DAC for training
+    # )
     dia = Dia(
         config=dia_config,
-        compute_dtype=compute_dtype.name,
+        compute_dtype=compute_dtype,
+        param_dtype=param_dtype,
         load_dac=False,  # Don't load DAC for training
+    )
+
+    # Log model size and parameter count
+    model = dia.model
+    model_stats = dia.get_model_stats()
+
+    log.info(f"Model initialized with {model_stats['total_params']:,} parameters")
+    log.info(f"Estimated model size: {model_stats['param_size_mb']:.2f} MB")
+    log.info(f"Compute dtype: {compute_dtype}")
+    log.info(f"Parameter dtype: {param_dtype}")
+    log.info(
+        f"Encoder max position embeddings: {dia_config.encoder_config.max_position_embeddings}"
+    )
+    log.info(
+        f"Decoder max position embeddings: {dia_config.decoder_config.max_position_embeddings}"
+    )
+    log.info(f"Decoder channels: {dia_config.decoder_config.num_channels}")
+    log.info(f"Decoder layers: {dia_config.decoder_config.num_hidden_layers}")
+    log.info(f"Decoder head dim: {dia_config.decoder_config.head_dim}")
+    log.info(f"Decoder KV heads: {dia_config.decoder_config.num_key_value_heads}")
+
+    # Create JAX-compatible config
+    jax_config = JaxConfig(
+        pad_token_id=dia_config.pad_token_id,
+        bos_token_id=dia_config.bos_token_id,
+        eos_token_id=dia_config.eos_token_id,
+        encoder_max_position_embeddings=dia_config.encoder_config.max_position_embeddings,
+        decoder_max_position_embeddings=dia_config.decoder_config.max_position_embeddings,
+        decoder_num_channels=dia_config.decoder_config.num_channels,
+        decoder_num_hidden_layers=dia_config.decoder_config.num_hidden_layers,
+        decoder_head_dim=dia_config.decoder_config.head_dim,
+        decoder_num_key_value_heads=dia_config.decoder_config.num_key_value_heads,
+        # Convert to tuple to make it hashable
+        delay_pattern=tuple(dia_config.delay_pattern),
+        compute_dtype=compute_dtype.to_dtype(),
     )
     model = dia.model
 
@@ -312,13 +366,18 @@ def main():
 
     # Initialize data loader
     log.info("Initializing data loader...")
-    train_loader = create_dummy_dataloader(
+    dataset = create_dataset(
+        parquet_path="chunks_dataset.test.parquet",
         config=dia_config,
-        batch_size=training_config.batch_size,
-        num_batches=training_config.total_steps
-        * training_config.gradient_accumulation_steps,
-        seed=42,
     )
+    train_loader = dataset.batch_iterator(
+        batch_size=training_config.batch_size,
+        shuffle=True,
+        use_weighted_sampling=False,
+    )
+
+    writer = SummaryWriter(log_dir=training_config.log_dir)
+    writer.add_text("Config/Training", str(vars(training_config)))
 
     # Training loop
     log.info("Starting training...")
@@ -328,7 +387,9 @@ def main():
     running_loss = 0.0
     running_accuracy = 0.0
 
-    pbar = tqdm(range(training_config.total_steps), desc="Training")
+    pbar = tqdm(
+        range(training_config.total_steps), desc="Training", leave=True, position=0
+    )
 
     for step in pbar:
         step_start_time = time.time()
@@ -337,17 +398,21 @@ def main():
         batch_loss = 0.0
         batch_accuracy = 0.0
 
-        for acc_step in range(training_config.gradient_accumulation_steps):
+        for _ in range(training_config.gradient_accumulation_steps):
             try:
                 batch = next(train_iter)
             except StopIteration:
                 train_iter = iter(train_loader)
                 batch = next(train_iter)
 
-            # Training step
-            loss, metrics = train_step(
-                model, optimizer, batch, dia_config, compute_dtype.to_dtype()
-            )
+            # Convert numpy arrays to JAX arrays
+            jax_batch = {
+                "text": jnp.array(batch["text"]),
+                "audio_input": jnp.array(batch["audio_input"]),
+                "audio_target": jnp.array(batch["audio_target"]),
+            }
+
+            loss, metrics = train_step(model, optimizer, jax_batch, jax_config)
 
             batch_loss += loss / training_config.gradient_accumulation_steps
             batch_accuracy += (
@@ -371,10 +436,18 @@ def main():
         # Log metrics
         if step % training_config.log_every == 0:
             step_time = time.time() - step_start_time
-            log.info(
+            pbar.write(
                 f"Step {step}: loss={batch_loss:.4f}, acc={batch_accuracy:.4f}, "
                 f"lr={current_lr:.6f}, time={step_time:.3f}s"
             )
+
+            # Log to TensorBoard
+            writer.add_scalar("Train/Loss", float(batch_loss), step)
+            writer.add_scalar("Train/Accuracy", float(batch_accuracy), step)
+            writer.add_scalar("Train/LearningRate", float(current_lr), step)
+            writer.add_scalar("Train/RunningLoss", float(running_loss), step)
+            writer.add_scalar("Train/RunningAccuracy", float(running_accuracy), step)
+            writer.add_scalar("Train/StepTime", step_time, step)
 
         # Save checkpoint
         if step > 0 and step % training_config.checkpoint_every_steps == 0:
@@ -382,6 +455,9 @@ def main():
 
     # Save final checkpoint
     save_checkpoint(model, training_config.total_steps, training_config.checkpoint_dir)
+
+    # Close TensorBoard writer
+    writer.close()
 
     log.info("Training completed!")
 

@@ -107,6 +107,7 @@ def compute_loss(
     decoder_outputs = model.decoder.forward(tokens, dec_state)
 
     # Output of the audio is the delayed input shifted by one with EOS
+    # TODO: This is wrong? I don't think it is the delayed input shifted but the undelayed input that is shifted!
     audio_target = tokens[:, 1:, :]
     eos_token = torch.full(
         (batch_size, 1, model.config.data.channels),
@@ -165,7 +166,7 @@ def main():
     os.makedirs(training_config.log_dir, exist_ok=True)
     writer = SummaryWriter(log_dir=training_config.log_dir)
 
-    dia_config = DiaConfig.load("config.test.json")
+    dia_config = DiaConfig.load("config.json")
     dia = Dia(
         config=dia_config,
         compute_dtype=ComputeDtype.BFLOAT16,

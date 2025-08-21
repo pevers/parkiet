@@ -2120,6 +2120,7 @@ dependencies = [
     { name = "python-ulid" },
     { name = "redis" },
     { name = "soundfile" },
+    { name = "tensorboard" },
     { name = "transformers" },
 ]
 
@@ -2162,6 +2163,7 @@ requires-dist = [
     { name = "python-ulid", specifier = ">=3.0.0" },
     { name = "redis", specifier = ">=6.2.0" },
     { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "tensorboard", specifier = ">=2.19.0" },
     { name = "transformers", specifier = ">=4.53.3" },
 ]
 provides-extras = ["cuda", "tpu"]

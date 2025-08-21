@@ -140,14 +140,19 @@ class BatchTranscriber:
                 if i < len(whisperd_results) and i < len(clean_results):
                     chunk_data = AudioChunk(**chunk_msg["chunk_data"])
 
-                    if whisperd_results[i]["text"] == "" or clean_results[i]["text"] == "":
-                        log.info(f"Skipping chunk {chunk_data.file_path} - no transcription result")
+                    if (
+                        whisperd_results[i]["text"] == ""
+                        or clean_results[i]["text"] == ""
+                    ):
+                        log.info(
+                            f"Skipping chunk {chunk_data.file_path} - no transcription result"
+                        )
                         continue
 
                     processed_chunk = ProcessedAudioChunk(
                         audio_chunk=chunk_data,
                         transcription=whisperd_results[i]["text"],
-                        transcription_clean=clean_results[i]["text"]
+                        transcription_clean=clean_results[i]["text"],
                     )
 
                     processed_chunks.append(processed_chunk)
