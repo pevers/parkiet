@@ -346,9 +346,8 @@ def create_dataset(
     config: DiaConfig,
     max_audio_length: int | None = None,
     max_text_length: int | None = None,
-    # TODO: CHANGE BACK WHEN TRAINING FR
-    transcript_clean_probability: float = 0.0,
-    text_dropout_probability: float = 0.0,
+    transcript_clean_probability: float = 0.15,
+    text_dropout_probability: float = 0.15,
 ) -> AudioTextDataset:
     """
     Create an AudioTextDataset for JAX training.
