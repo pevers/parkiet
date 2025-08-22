@@ -22,6 +22,7 @@ def _process_shard_worker(shard_info: tuple) -> str:
         output_path,
         data_directory,
         dia_config_path,
+        gcs_upload_path,
     ) = shard_info
 
     # Initialize components in worker process
@@ -54,8 +55,7 @@ def _process_shard_worker(shard_info: tuple) -> str:
         )
         shard_data.append(chunk_data)
 
-    # Write shard
-    _write_shard_to_parquet(shard_data, shard_output_path)
+    _write_shard_to_parquet(shard_data, shard_output_path, gcs_upload_path)
 
     return f"Shard {shard_idx + 1}/{total_shards}: {len(shard_chunks)} chunks -> {shard_output_path}"
 
@@ -66,6 +66,7 @@ def convert_to_arrow_table(
     chunk_limit: int | None = None,
     data_directory: Path | None = None,
     num_workers: int = 1,
+    gcs_upload_path: str | None = None,
 ) -> None:
     """Convert processed audio chunks from database to Apache Arrow format.
 
@@ -75,6 +76,7 @@ def convert_to_arrow_table(
         chunk_limit: Optional limit on number of chunks to process
         data_directory: Local directory containing audio chunks, if None uses GCS
         num_workers: Number of worker processes to use
+        gcs_upload_path: Optional GCS path to upload shards to, removes local files after upload
     """
     audio_store = AudioStore()
 
@@ -110,6 +112,7 @@ def convert_to_arrow_table(
             output_path,
             data_directory,
             dia_config_path,
+            gcs_upload_path,
         )
         shard_infos.append(shard_info)
 
@@ -129,8 +132,10 @@ def convert_to_arrow_table(
     log.info(f"Conversion complete! Created {total_shards} shard(s)")
 
 
-def _write_shard_to_parquet(chunk_data: list[dict], output_path: Path) -> None:
-    """Write chunk data to parquet file."""
+def _write_shard_to_parquet(
+    chunk_data: list[dict], output_path: Path, gcs_upload_path: str | None = None
+) -> None:
+    """Write chunk data to parquet file and optionally upload to GCS."""
     log.info(f"Creating Arrow table with {len(chunk_data)} chunks...")
 
     # Create Arrow table
@@ -150,6 +155,22 @@ def _write_shard_to_parquet(chunk_data: list[dict], output_path: Path) -> None:
     # Write file with zstd compression
     pq.write_table(table, output_path, compression="zstd")
     log.info(f"Shard saved to: {output_path} ({table.shape[0]} rows)")
+
+    # Upload to GCS if path provided
+    if gcs_upload_path:
+        gcs_client = GCSClient()
+        gcs_path = gcs_upload_path.rstrip("/") + "/" + output_path.name
+        log.info(f"Uploading shard to GCS: {gcs_path}")
+
+        # Upload to GCS
+        blob = gcs_client.bucket.blob(
+            gcs_path.replace("gs://" + gcs_client.bucket.name + "/", "")
+        )
+        blob.upload_from_filename(str(output_path))
+
+        # Remove local file
+        output_path.unlink()
+        log.info(f"Shard uploaded to GCS and local file removed: {gcs_path}")
 
 
 def _define_arrow_schema() -> pa.Schema:
@@ -268,6 +289,12 @@ def main():
     parser.add_argument(
         "--verbose", "-v", action="store_true", help="Enable verbose logging"
     )
+    parser.add_argument(
+        "--gcs-upload-path",
+        "-g",
+        type=str,
+        help="GCS path to upload shards to (e.g., 'gs://bucket/path/'), removes local files after upload",
+    )
 
     args = parser.parse_args()
 
@@ -284,6 +311,7 @@ def main():
         chunk_limit=args.limit,
         data_directory=args.data_directory,
         num_workers=args.workers,
+        gcs_upload_path=args.gcs_upload_path,
     )
 
 
