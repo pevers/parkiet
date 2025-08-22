@@ -15,41 +15,56 @@ import json
 log = logging.getLogger(__name__)
 
 
-def save_chunks_to_file(chunks: list[dict], output_file: Path) -> None:
-    """Save chunks to a JSON file."""
+def _save_dataset_to_file(dataset: list[dict], output_file: Path) -> None:
+    """Save dataset to a JSON file."""
     with open(output_file, 'w') as f:
-        json.dump(chunks, f, indent=2)
-    log.info(f"Saved {len(chunks)} chunks to {output_file}")
+        json.dump(dataset, f, indent=2)
+    log.info(f"Saved {len(dataset)} chunks to {output_file}")
 
 
-def load_chunks_from_file(input_file: Path) -> list[dict]:
-    """Load chunks from a JSON file."""
+def load_dataset_from_file(input_file: Path) -> list[dict]:
+    """Load dataset from a JSON file."""
     with open(input_file, 'r') as f:
-        chunks = json.load(f)
-    log.info(f"Loaded {len(chunks)} chunks from {input_file}")
-    return chunks
+        dataset = json.load(f)
+    log.info(f"Loaded {len(dataset)} chunks from {input_file}")
+    return dataset
 
 
-def split_chunks_file(input_file: Path, output_dir: Path = None) -> tuple[Path, Path]:
-    """Split chunks file into two equal parts (set1 and set2)."""
-    chunks = load_chunks_from_file(input_file)
+def prepare_dataset_splits(num_splits: int, chunk_limit: int | None = None, output_dir: Path = Path(".")) -> list[Path]:
+    """Fetch chunks from database and split into specified number of files."""
+    audio_store = AudioStore()
     
-    if output_dir is None:
-        output_dir = input_file.parent
+    log.info(f"Fetching audio chunks from database (limit: {chunk_limit})...")
+    chunks = audio_store.get_all_audio_chunks(limit=chunk_limit)
     
-    mid_point = len(chunks) // 2
-    set1_chunks = chunks[:mid_point]
-    set2_chunks = chunks[mid_point:]
+    if not chunks:
+        log.warning("No audio chunks found in database")
+        return []
     
-    set1_file = output_dir / f"{input_file.stem}_set1.json"
-    set2_file = output_dir / f"{input_file.stem}_set2.json"
+    log.info(f"Found {len(chunks)} audio chunks to split into {num_splits} files")
     
-    save_chunks_to_file(set1_chunks, set1_file)
-    save_chunks_to_file(set2_chunks, set2_file)
+    chunks_per_split = len(chunks) // num_splits
+    remainder = len(chunks) % num_splits
     
-    log.info(f"Split {len(chunks)} chunks into {len(set1_chunks)} (set1) and {len(set2_chunks)} (set2)")
+    split_files = []
+    start_idx = 0
     
-    return set1_file, set2_file
+    for i in range(num_splits):
+        # Add one extra chunk to the first 'remainder' splits
+        current_split_size = chunks_per_split + (1 if i < remainder else 0)
+        end_idx = start_idx + current_split_size
+        
+        split_chunks = chunks[start_idx:end_idx]
+        split_file = output_dir / f"chunks_split_{i+1:03d}.json"
+        
+        _save_dataset_to_file(split_chunks, split_file)
+        split_files.append(split_file)
+        
+        log.info(f"Split {i+1}/{num_splits}: {len(split_chunks)} chunks -> {split_file}")
+        start_idx = end_idx
+    
+    log.info(f"Prepared {num_splits} split files from {len(chunks)} chunks")
+    return split_files
 
 
 def _process_shard_worker(shard_info: tuple) -> str:
@@ -115,7 +130,7 @@ def convert_to_arrow_table(
     data_directory: Path | None = None,
     num_workers: int = 1,
     gcs_upload_path: str | None = None,
-    chunks_file: Path | None = None,
+    dataset_file: Path | None = None,
 ) -> None:
     """Convert processed audio chunks from database to Apache Arrow format.
 
@@ -126,14 +141,14 @@ def convert_to_arrow_table(
         data_directory: Local directory containing audio chunks, if None uses GCS
         num_workers: Number of worker processes to use
         gcs_upload_path: Optional GCS path to upload shards to, removes local files after upload
-        chunks_file: Optional path to JSON file containing chunks data (if provided, skips database query)
+        dataset_file: Optional path to JSON file containing dataset (if provided, skips database query)
     """
     audio_store = AudioStore()
 
     # Get audio chunks from file or database
-    if chunks_file:
-        log.info(f"Loading audio chunks from file: {chunks_file}")
-        chunks = load_chunks_from_file(chunks_file)
+    if dataset_file:
+        log.info(f"Loading dataset from file: {dataset_file}")
+        chunks = load_dataset_from_file(dataset_file)
         if chunk_limit:
             chunks = chunks[:chunk_limit]
             log.info(f"Limited chunks to {len(chunks)} due to --limit parameter")
@@ -381,21 +396,15 @@ def main():
         help="GCS path to upload shards to (e.g., 'gs://bucket/path/'), removes local files after upload",
     )
     parser.add_argument(
-        "--chunks-file",
-        "-c",
+        "--dataset-file",
         type=Path,
-        help="JSON file containing chunks data (if provided, skips database query)",
+        help="JSON file containing dataset (for easy parallel processing on multiple GPUs)",
     )
     parser.add_argument(
-        "--save-chunks",
-        "-s",
-        type=Path,
-        help="Save chunks to JSON file instead of processing them",
-    )
-    parser.add_argument(
-        "--split-chunks",
-        type=Path,
-        help="Split chunks file into two equal parts (set1 and set2)",
+        "--prepare",
+        "-p",
+        type=int,
+        help="Prepare dataset by fetching from database and splitting into N files",
     )
 
     args = parser.parse_args()
@@ -406,17 +415,9 @@ def main():
         level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
-    # Handle split chunks operation
-    if args.split_chunks:
-        split_chunks_file(args.split_chunks)
-        return
-
-    # Handle save chunks operation
-    if args.save_chunks:
-        audio_store = AudioStore()
-        log.info(f"Fetching audio chunks from database (limit: {args.limit})...")
-        chunks = audio_store.get_all_audio_chunks(limit=args.limit)
-        save_chunks_to_file(chunks, args.save_chunks)
+    # Handle prepare dataset operation
+    if args.prepare:
+        prepare_dataset_splits(args.prepare, args.limit)
         return
 
     # Convert to arrow table
@@ -427,7 +428,7 @@ def main():
         data_directory=args.data_directory,
         num_workers=args.workers,
         gcs_upload_path=args.gcs_upload_path,
-        chunks_file=args.chunks_file,
+        dataset_file=args.dataset_file,
     )
 
 
