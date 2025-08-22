@@ -50,8 +50,17 @@ def _process_shard_worker(shard_info: tuple) -> str:
 
     # Process chunks for this shard
     shard_data = []
-    for chunk in shard_chunks:
-        log.info(f"Processing chunk {chunk['chunk_id']}")
+    total_chunks = len(shard_chunks)
+    progress_interval = max(1, total_chunks // 10)  # Log every 10%
+
+    for i, chunk in enumerate(shard_chunks):
+        # Log progress every 10%
+        if (i + 1) % progress_interval == 0 or i == total_chunks - 1:
+            progress_percent = ((i + 1) / total_chunks) * 100
+            log.info(
+                f"Processing chunk {chunk['chunk_id']} - Progress: {progress_percent:.1f}% ({i + 1}/{total_chunks})"
+            )
+
         chunk_data = _extract_chunk_data_from_db(
             dia, chunk, speaker_weights, audio_store, data_directory, gcs_client
         )
