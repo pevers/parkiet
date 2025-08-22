@@ -10,8 +10,46 @@ from parkiet.storage.gcs_client import GCSClient
 from parkiet.dia.model import ComputeDtype, Dia
 import tempfile
 from multiprocessing import Pool
+import json
 
 log = logging.getLogger(__name__)
+
+
+def save_chunks_to_file(chunks: list[dict], output_file: Path) -> None:
+    """Save chunks to a JSON file."""
+    with open(output_file, 'w') as f:
+        json.dump(chunks, f, indent=2)
+    log.info(f"Saved {len(chunks)} chunks to {output_file}")
+
+
+def load_chunks_from_file(input_file: Path) -> list[dict]:
+    """Load chunks from a JSON file."""
+    with open(input_file, 'r') as f:
+        chunks = json.load(f)
+    log.info(f"Loaded {len(chunks)} chunks from {input_file}")
+    return chunks
+
+
+def split_chunks_file(input_file: Path, output_dir: Path = None) -> tuple[Path, Path]:
+    """Split chunks file into two equal parts (set1 and set2)."""
+    chunks = load_chunks_from_file(input_file)
+    
+    if output_dir is None:
+        output_dir = input_file.parent
+    
+    mid_point = len(chunks) // 2
+    set1_chunks = chunks[:mid_point]
+    set2_chunks = chunks[mid_point:]
+    
+    set1_file = output_dir / f"{input_file.stem}_set1.json"
+    set2_file = output_dir / f"{input_file.stem}_set2.json"
+    
+    save_chunks_to_file(set1_chunks, set1_file)
+    save_chunks_to_file(set2_chunks, set2_file)
+    
+    log.info(f"Split {len(chunks)} chunks into {len(set1_chunks)} (set1) and {len(set2_chunks)} (set2)")
+    
+    return set1_file, set2_file
 
 
 def _process_shard_worker(shard_info: tuple) -> str:
@@ -54,7 +92,6 @@ def _process_shard_worker(shard_info: tuple) -> str:
     progress_interval = max(1, total_chunks // 1000)  # Log every 0.1%
 
     for i, chunk in enumerate(shard_chunks):
-        # Log progress every 1%
         if (i + 1) % progress_interval == 0 or i == total_chunks - 1:
             progress_percent = ((i + 1) / total_chunks) * 100
             log.info(
@@ -78,6 +115,7 @@ def convert_to_arrow_table(
     data_directory: Path | None = None,
     num_workers: int = 1,
     gcs_upload_path: str | None = None,
+    chunks_file: Path | None = None,
 ) -> None:
     """Convert processed audio chunks from database to Apache Arrow format.
 
@@ -88,15 +126,23 @@ def convert_to_arrow_table(
         data_directory: Local directory containing audio chunks, if None uses GCS
         num_workers: Number of worker processes to use
         gcs_upload_path: Optional GCS path to upload shards to, removes local files after upload
+        chunks_file: Optional path to JSON file containing chunks data (if provided, skips database query)
     """
     audio_store = AudioStore()
 
-    # Get all audio chunks from database
-    log.info(f"Fetching audio chunks from database (limit: {chunk_limit})...")
-    chunks = audio_store.get_all_audio_chunks(limit=chunk_limit)
+    # Get audio chunks from file or database
+    if chunks_file:
+        log.info(f"Loading audio chunks from file: {chunks_file}")
+        chunks = load_chunks_from_file(chunks_file)
+        if chunk_limit:
+            chunks = chunks[:chunk_limit]
+            log.info(f"Limited chunks to {len(chunks)} due to --limit parameter")
+    else:
+        log.info(f"Fetching audio chunks from database (limit: {chunk_limit})...")
+        chunks = audio_store.get_all_audio_chunks(limit=chunk_limit)
 
     if not chunks:
-        log.warning("No audio chunks found in database")
+        log.warning("No audio chunks found")
         return
 
     log.info(f"Found {len(chunks)} audio chunks to process")
@@ -334,6 +380,23 @@ def main():
         type=str,
         help="GCS path to upload shards to (e.g., 'gs://bucket/path/'), removes local files after upload",
     )
+    parser.add_argument(
+        "--chunks-file",
+        "-c",
+        type=Path,
+        help="JSON file containing chunks data (if provided, skips database query)",
+    )
+    parser.add_argument(
+        "--save-chunks",
+        "-s",
+        type=Path,
+        help="Save chunks to JSON file instead of processing them",
+    )
+    parser.add_argument(
+        "--split-chunks",
+        type=Path,
+        help="Split chunks file into two equal parts (set1 and set2)",
+    )
 
     args = parser.parse_args()
 
@@ -343,6 +406,19 @@ def main():
         level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
+    # Handle split chunks operation
+    if args.split_chunks:
+        split_chunks_file(args.split_chunks)
+        return
+
+    # Handle save chunks operation
+    if args.save_chunks:
+        audio_store = AudioStore()
+        log.info(f"Fetching audio chunks from database (limit: {args.limit})...")
+        chunks = audio_store.get_all_audio_chunks(limit=args.limit)
+        save_chunks_to_file(chunks, args.save_chunks)
+        return
+
     # Convert to arrow table
     convert_to_arrow_table(
         dia_config_path="config.json",
@@ -351,6 +427,7 @@ def main():
         data_directory=args.data_directory,
         num_workers=args.workers,
         gcs_upload_path=args.gcs_upload_path,
+        chunks_file=args.chunks_file,
     )
 
 
