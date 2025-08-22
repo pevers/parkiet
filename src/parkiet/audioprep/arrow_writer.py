@@ -51,6 +51,7 @@ def _process_shard_worker(shard_info: tuple) -> str:
     # Process chunks for this shard
     shard_data = []
     for chunk in shard_chunks:
+        log.info(f"Processing chunk {chunk['chunk_id']}")
         chunk_data = _extract_chunk_data_from_db(
             dia, chunk, speaker_weights, audio_store, data_directory, gcs_client
         )
@@ -91,7 +92,8 @@ def convert_to_arrow_table(
 
     log.info(f"Found {len(chunks)} audio chunks to process")
 
-    chunks_per_shard = 34000
+    # Compression with DAC is a lot, so we should bundle a ton of them
+    chunks_per_shard = 40000
     total_shards = (len(chunks) + chunks_per_shard - 1) // chunks_per_shard
 
     log.info(
