@@ -8,24 +8,73 @@ from parkiet.dia.config import DiaConfig
 from parkiet.storage.gcs_client import GCSClient
 from parkiet.dia.model import ComputeDtype, Dia
 import tempfile
-import os
+from multiprocessing import Pool
 
 log = logging.getLogger(__name__)
 
 
+def _process_shard_worker(shard_info: tuple) -> str:
+    """Worker function to process a single shard in a separate process."""
+    (
+        shard_chunks,
+        shard_idx,
+        total_shards,
+        output_path,
+        data_directory,
+        dia_config_path,
+    ) = shard_info
+
+    # Initialize components in worker process
+    audio_store = AudioStore()
+    speaker_weights = audio_store.calculate_speaker_weights()
+
+    dia_config = DiaConfig.load(dia_config_path)
+    dia = Dia(config=dia_config, compute_dtype=ComputeDtype.BFLOAT16, load_dac=True)
+    dia._load_dac_model()
+
+    gcs_client = None
+    if data_directory is None:
+        gcs_client = GCSClient()
+
+    # Generate shard output path
+    if total_shards == 1:
+        shard_output_path = output_path
+    else:
+        stem = output_path.stem
+        suffix = output_path.suffix
+        shard_output_path = (
+            output_path.parent / f"{stem}_shard_{shard_idx + 1:03d}{suffix}"
+        )
+
+    # Process chunks for this shard
+    shard_data = []
+    for chunk in shard_chunks:
+        chunk_data = _extract_chunk_data_from_db(
+            dia, chunk, speaker_weights, audio_store, data_directory, gcs_client
+        )
+        shard_data.append(chunk_data)
+
+    # Write shard
+    _write_shard_to_parquet(shard_data, shard_output_path)
+
+    return f"Shard {shard_idx + 1}/{total_shards}: {len(shard_chunks)} chunks -> {shard_output_path}"
+
+
 def convert_to_arrow_table(
-    dia: Dia,
+    dia_config_path: str,
     output_path: Path,
     chunk_limit: int | None = None,
     data_directory: Path | None = None,
+    num_workers: int = 1,
 ) -> None:
     """Convert processed audio chunks from database to Apache Arrow format.
 
     Args:
-        dia: Dia model for audio processing
-        output_path: Path where to save the parquet file
+        dia_config_path: Path to Dia config file
+        output_path: Path where to save the parquet file(s)
         chunk_limit: Optional limit on number of chunks to process
         data_directory: Local directory containing audio chunks, if None uses GCS
+        num_workers: Number of worker processes to use
     """
     audio_store = AudioStore()
 
@@ -39,37 +88,52 @@ def convert_to_arrow_table(
 
     log.info(f"Found {len(chunks)} audio chunks to process")
 
-    # Pre-calculate speaker weights
-    log.info("Calculating speaker weights...")
-    speaker_weights = audio_store.calculate_speaker_weights()
-    log.info(f"Calculated weights for {len(speaker_weights)} speakers")
+    # Calculate chunks per shard (1GB / 600KB = ~1707 chunks per shard)
+    chunks_per_shard = 1707
+    total_shards = (len(chunks) + chunks_per_shard - 1) // chunks_per_shard
 
-    # Initialize GCS client if no local data directory
-    gcs_client = None
-    if data_directory is None:
-        log.info("No data directory provided, will fetch audio from GCS")
-        gcs_client = GCSClient()
+    log.info(
+        f"Creating {total_shards} shards with ~{chunks_per_shard} chunks each using {num_workers} workers"
+    )
 
-    # Collect all chunk data
-    all_chunk_data = []
-    total_processed = 0
+    # Prepare shard info for workers
+    shard_infos = []
+    for shard_idx in range(total_shards):
+        start_idx = shard_idx * chunks_per_shard
+        end_idx = min(start_idx + chunks_per_shard, len(chunks))
+        shard_chunks = chunks[start_idx:end_idx]
 
-    for chunk in chunks:
-        log.debug(f"Processing chunk {chunk['chunk_id']}")
-        chunk_data = _extract_chunk_data_from_db(
-            dia, chunk, speaker_weights, audio_store, data_directory, gcs_client
+        shard_info = (
+            shard_chunks,
+            shard_idx,
+            total_shards,
+            output_path,
+            data_directory,
+            dia_config_path,
         )
-        all_chunk_data.append(chunk_data)
-        total_processed += 1
+        shard_infos.append(shard_info)
 
-        if total_processed % 100 == 0:
-            log.info(f"Processed {total_processed}/{len(chunks)} chunks")
+    # Process shards using multiprocessing
+    if num_workers == 1:
+        # Single process mode
+        for shard_info in shard_infos:
+            result = _process_shard_worker(shard_info)
+            log.info(result)
+    else:
+        # Multi-process mode
+        with Pool(num_workers) as pool:
+            results = pool.map(_process_shard_worker, shard_infos)
+            for result in results:
+                log.info(result)
 
-    if not all_chunk_data:
-        log.warning("No valid chunk data found")
-        return
+    log.info(f"Conversion complete! Created {total_shards} shard(s)")
 
-    log.info(f"Creating Arrow table with {total_processed} chunks...")
+
+def _write_shard_to_parquet(chunk_data: list[dict], output_path: Path) -> None:
+    """Write chunk data to parquet file."""
+    log.info(f"Creating Arrow table with {len(chunk_data)} chunks...")
+
+    # Create Arrow table
     column_data = {}
     schema = _define_arrow_schema()
 
@@ -77,16 +141,15 @@ def convert_to_arrow_table(
         column_data[field.name] = []
 
     # Populate column data from row data
-    for row in all_chunk_data:
+    for row in chunk_data:
         for column_name in column_data.keys():
             column_data[column_name].append(row[column_name])
 
     table = pa.table(column_data, schema=schema)
 
-    pq.write_table(table, output_path, compression="snappy")
-
-    log.info(f"Arrow table saved to: {output_path}")
-    log.info(f"Table shape: {table.shape}")
+    # Write file with zstd compression
+    pq.write_table(table, output_path, compression="zstd")
+    log.info(f"Shard saved to: {output_path} ({table.shape[0]} rows)")
 
 
 def _define_arrow_schema() -> pa.Schema:
@@ -160,20 +223,15 @@ def _load_audio_data(
 
     elif gcs_client:
         # Load from GCS
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-            try:
-                # Download from GCS to temporary file
-                blob = gcs_client.bucket.blob(f"chunks/{chunk_file_path}")
-                blob.download_to_filename(tmp_file.name)
+        with tempfile.NamedTemporaryFile(suffix=".wav") as tmp_file:
+            # Download from GCS to temporary file
+            blob = gcs_client.bucket.blob(f"chunks/{chunk_file_path}")
+            blob.download_to_filename(tmp_file.name)
 
-                # Load audio from temporary file
-                encoded_audio = dia.load_audio(Path(tmp_file.name))
+            # Load audio from temporary file
+            encoded_audio = dia.load_audio(Path(tmp_file.name))
 
-                return encoded_audio
-            finally:
-                # Clean up temporary file
-                if os.path.exists(tmp_file.name):
-                    os.unlink(tmp_file.name)
+            return encoded_audio
 
     else:
         raise ValueError("Either data_directory or gcs_client must be provided")
@@ -201,6 +259,13 @@ def main():
         help="Local directory containing audio chunk files (if not provided, will fetch from GCS)",
     )
     parser.add_argument(
+        "--workers",
+        "-w",
+        type=int,
+        default=1,
+        help="Number of worker processes to use (default: 1)",
+    )
+    parser.add_argument(
         "--verbose", "-v", action="store_true", help="Enable verbose logging"
     )
 
@@ -212,20 +277,13 @@ def main():
         level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
-    # Initialize Dia model
-    log.info("Initializing Dia model...")
-    dia_config = DiaConfig.load("config.json")
-    dia = Dia(config=dia_config, compute_dtype=ComputeDtype.BFLOAT16, load_dac=True)
-
-    # Hack to stay compatible with the old model
-    dia._load_dac_model()
-
     # Convert to arrow table
     convert_to_arrow_table(
-        dia=dia,
+        dia_config_path="config.json",
         output_path=args.output,
         chunk_limit=args.limit,
         data_directory=args.data_directory,
+        num_workers=args.workers,
     )
 
 
