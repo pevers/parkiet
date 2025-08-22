@@ -51,7 +51,7 @@ def _process_shard_worker(shard_info: tuple) -> str:
     # Process chunks for this shard
     shard_data = []
     total_chunks = len(shard_chunks)
-    progress_interval = max(1, total_chunks // 100)  # Log every 1%
+    progress_interval = max(1, total_chunks // 1000)  # Log every 0.1%
 
     for i, chunk in enumerate(shard_chunks):
         # Log progress every 1%
