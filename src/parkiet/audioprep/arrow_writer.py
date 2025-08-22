@@ -1,5 +1,6 @@
 import argparse
 import logging
+import time
 from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -90,8 +91,7 @@ def convert_to_arrow_table(
 
     log.info(f"Found {len(chunks)} audio chunks to process")
 
-    # Calculate chunks per shard (1GB / 600KB = ~1707 chunks per shard)
-    chunks_per_shard = 1707
+    chunks_per_shard = 34000
     total_shards = (len(chunks) + chunks_per_shard - 1) // chunks_per_shard
 
     log.info(
@@ -120,8 +120,10 @@ def convert_to_arrow_table(
     if num_workers == 1:
         # Single process mode
         for shard_info in shard_infos:
+            start_time = time.time()
             result = _process_shard_worker(shard_info)
-            log.info(result)
+            shard_time = time.time() - start_time
+            log.info(f"{result} (took {shard_time:.2f}s)")
     else:
         # Multi-process mode
         with Pool(num_workers) as pool:
@@ -158,19 +160,45 @@ def _write_shard_to_parquet(
 
     # Upload to GCS if path provided
     if gcs_upload_path:
-        gcs_client = GCSClient()
-        gcs_path = gcs_upload_path.rstrip("/") + "/" + output_path.name
-        log.info(f"Uploading shard to GCS: {gcs_path}")
+        # Parse GCS URL to extract bucket and path
+        if gcs_upload_path.startswith("gs://"):
+            # Extract bucket name and path from gs://bucket/path format
+            parts = gcs_upload_path[5:].split(
+                "/", 1
+            )  # Remove "gs://" and split on first "/"
+            if len(parts) >= 2:
+                upload_bucket = parts[0]
+                upload_path = parts[1]
+            else:
+                upload_bucket = parts[0]
+                upload_path = ""
+        else:
+            # Assume it's just a path in the default bucket
+            upload_bucket = None
+            upload_path = gcs_upload_path
+
+        # Create GCS client with the specified bucket (if different from default)
+        gcs_client = (
+            GCSClient(bucket_name=upload_bucket) if upload_bucket else GCSClient()
+        )
+
+        # Construct the full GCS path
+        if upload_path:
+            gcs_path = upload_path.rstrip("/") + "/" + output_path.name
+        else:
+            gcs_path = output_path.name
+
+        log.info(f"Uploading shard to GCS: gs://{gcs_client.bucket_name}/{gcs_path}")
 
         # Upload to GCS
-        blob = gcs_client.bucket.blob(
-            gcs_path.replace("gs://" + gcs_client.bucket.name + "/", "")
-        )
+        blob = gcs_client.bucket.blob(gcs_path)
         blob.upload_from_filename(str(output_path))
 
         # Remove local file
         output_path.unlink()
-        log.info(f"Shard uploaded to GCS and local file removed: {gcs_path}")
+        log.info(
+            f"Shard uploaded to GCS and local file removed: gs://{gcs_client.bucket_name}/{gcs_path}"
+        )
 
 
 def _define_arrow_schema() -> pa.Schema:
