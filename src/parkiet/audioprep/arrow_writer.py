@@ -17,52 +17,56 @@ log = logging.getLogger(__name__)
 
 def _save_dataset_to_file(dataset: list[dict], output_file: Path) -> None:
     """Save dataset to a JSON file."""
-    with open(output_file, 'w') as f:
+    with open(output_file, "w") as f:
         json.dump(dataset, f, indent=2)
     log.info(f"Saved {len(dataset)} chunks to {output_file}")
 
 
 def load_dataset_from_file(input_file: Path) -> list[dict]:
     """Load dataset from a JSON file."""
-    with open(input_file, 'r') as f:
+    with open(input_file, "r") as f:
         dataset = json.load(f)
     log.info(f"Loaded {len(dataset)} chunks from {input_file}")
     return dataset
 
 
-def prepare_dataset_splits(num_splits: int, chunk_limit: int | None = None, output_dir: Path = Path(".")) -> list[Path]:
+def prepare_dataset_splits(
+    num_splits: int, chunk_limit: int | None = None, output_dir: Path = Path(".")
+) -> list[Path]:
     """Fetch chunks from database and split into specified number of files."""
     audio_store = AudioStore()
-    
+
     log.info(f"Fetching audio chunks from database (limit: {chunk_limit})...")
     chunks = audio_store.get_all_audio_chunks(limit=chunk_limit)
-    
+
     if not chunks:
         log.warning("No audio chunks found in database")
         return []
-    
+
     log.info(f"Found {len(chunks)} audio chunks to split into {num_splits} files")
-    
+
     chunks_per_split = len(chunks) // num_splits
     remainder = len(chunks) % num_splits
-    
+
     split_files = []
     start_idx = 0
-    
+
     for i in range(num_splits):
         # Add one extra chunk to the first 'remainder' splits
         current_split_size = chunks_per_split + (1 if i < remainder else 0)
         end_idx = start_idx + current_split_size
-        
+
         split_chunks = chunks[start_idx:end_idx]
-        split_file = output_dir / f"chunks_split_{i+1:03d}.json"
-        
+        split_file = output_dir / f"chunks_split_{i + 1:03d}.json"
+
         _save_dataset_to_file(split_chunks, split_file)
         split_files.append(split_file)
-        
-        log.info(f"Split {i+1}/{num_splits}: {len(split_chunks)} chunks -> {split_file}")
+
+        log.info(
+            f"Split {i + 1}/{num_splits}: {len(split_chunks)} chunks -> {split_file}"
+        )
         start_idx = end_idx
-    
+
     log.info(f"Prepared {num_splits} split files from {len(chunks)} chunks")
     return split_files
 
@@ -420,10 +424,20 @@ def main():
         prepare_dataset_splits(args.prepare, args.limit)
         return
 
+    # Adjust output path if using dataset file to avoid conflicts
+    output_path = args.output
+    if args.dataset_file:
+        dataset_stem = args.dataset_file.stem
+        output_stem = output_path.stem
+        output_suffix = output_path.suffix
+        output_path = (
+            output_path.parent / f"{output_stem}_{dataset_stem}{output_suffix}"
+        )
+
     # Convert to arrow table
     convert_to_arrow_table(
         dia_config_path="config.json",
-        output_path=args.output,
+        output_path=output_path,
         chunk_limit=args.limit,
         data_directory=args.data_directory,
         num_workers=args.workers,
