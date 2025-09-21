@@ -1,0 +1,11 @@
+.venv/
+weights/
+__pycache__/
+.vscode/
+data/
+logs/
+.env
+wandb/
+shards/
+bucket_mp3_files.txt
+.DS_Store

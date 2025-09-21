@@ -1,0 +1,85 @@
+Responsible AI License – Model (RAIL-M)
+Version 1.0 (TTS Adaptation)
+
+--------------------------------------
+PREAMBLE
+--------------------------------------
+
+This Responsible AI License governs the use of the accompanying
+model artifacts ("the Model"). The purpose of this license is to
+promote open access and research while protecting against harmful
+and abusive uses of text-to-speech (TTS) technology.
+
+You are free to use, copy, modify, merge, publish, distribute,
+and create derivative works of the Model, subject to the conditions
+below.
+
+This license applies only to the Model (e.g. weights, checkpoints,
+and training artifacts). The source code in this repository is
+licensed separately under the MIT License.
+
+--------------------------------------
+CONDITIONS OF USE
+--------------------------------------
+
+Permission is granted free of charge to any person obtaining a
+copy of the Model, provided that:
+
+1. Attribution
+   - You must give appropriate credit, provide a link to this
+     repository, and indicate if changes were made.
+
+2. Redistribution
+   - Any redistribution of the Model or derivatives must include
+     this license text and retain the same restrictions.
+
+3. Prohibited Uses
+   You may not use the Model, or derivatives thereof, in any way
+   that violates applicable laws or regulations, or in the following
+   specific use cases:
+
+   a. **Impersonation and Deepfakes**
+      - Generating voices that deliberately impersonate individuals
+        (public or private persons) without their prior, informed
+        consent.
+      - Creating synthetic speech intended to mislead listeners into
+        believing it originates from a real person when it does not.
+
+   b. **Fraud and Deception**
+      - Using the Model for scams, fraud, disinformation, or other
+        deceptive practices.
+
+   c. **Harassment and Abuse**
+      - Generating speech that promotes hate, harassment, threats,
+        or abuse against individuals or groups.
+
+   d. **Illegal or Harmful Uses**
+      - Any application that is unlawful, defamatory, or invasive
+        of privacy.
+      - Any use in biometric surveillance, profiling, or applications
+        that violate human rights.
+
+   e. **Medical, Legal, or Safety-Critical Advice**
+      - Using the Model to provide medical, legal, or safety-critical
+        guidance without appropriate human oversight.
+
+--------------------------------------
+DISCLAIMER OF WARRANTY
+--------------------------------------
+
+The Model is provided "AS IS", without warranty of any kind,
+express or implied, including but not limited to the warranties
+of merchantability, fitness for a particular purpose, and
+noninfringement. In no event shall the authors or copyright holders
+be liable for any claim, damages, or other liability arising from
+the use of the Model.
+
+--------------------------------------
+LIMITATION OF LIABILITY
+--------------------------------------
+
+By using the Model, you agree that you assume all risks associated
+with its use. You are responsible for compliance with this license
+and with applicable laws.
+
+--------------------------------------

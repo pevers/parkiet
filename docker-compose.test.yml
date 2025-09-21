@@ -1,0 +1,29 @@
+services:
+  postgres-test:
+    image: pgvector/pgvector:pg16
+    container_name: postgres-parkiet-test
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: parkiet_test
+      POSTGRES_USER: parkiet
+      POSTGRES_PASSWORD: parkiet
+    ports:
+      - "5433:5432"  # Different port to avoid conflicts
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - parkiet-test-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d parkiet_test"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_test_data:
+    driver: local
+
+networks:
+  parkiet-test-network:
+    driver: bridge 
