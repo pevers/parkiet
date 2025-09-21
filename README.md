@@ -56,7 +56,7 @@ By using this model, you agree to uphold relevant legal standards and ethical re
 
 ## Training
 
-For a full guide on data preparation, model conversion and the TPU setup to train this model for any language, see `TRAINING.md`.
+For a full guide on data preparation, model conversion and the TPU setup to train this model for any language, see [TRAINING.md](TRAINING.md).
 
 ## Acknowledgements
 

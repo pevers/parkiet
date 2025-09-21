@@ -119,6 +119,8 @@ For development, a simple single-device script is provided:
 uv run python src/parkiet/jax/train.py
 ```
 
+To address the problem of class imabalance we store weights for the samples when we generate the Parquet files. However, our class balanced model performed worse than the original naive model, hence we don't use it. The weights are computed using the [Class-Balanced Loss](https://arxiv.org/abs/1901.05555) approach.
+
 For production training on multiple devices:
 
 **Multi-device/distributed training (production):**
