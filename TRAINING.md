@@ -121,12 +121,9 @@ uv run python src/parkiet/jax/train.py
 
 To address the problem of class imabalance we store weights for the samples when we generate the Parquet files. However, our class balanced model performed worse than the original naive model, hence we don't use it. The weights are computed using the [Class-Balanced Loss](https://arxiv.org/abs/1901.05555) approach.
 
-For production training on multiple devices:
-
 **Multi-device/distributed training (production):**
-```bash
-uv run python src/parkiet/jax/train_distributed.py
-```
+
+For production training on multiple devices we need to start the [train_distributed.py](src/parkiet/jax/train_distributed.py) script. A helper script is created to update the repository, sync the dependencies and start the training in the background while logging to Weights & Biases via [start_training.sh](start_training.sh).
 
 ### Training Configuration
 
