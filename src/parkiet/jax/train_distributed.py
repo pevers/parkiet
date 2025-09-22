@@ -371,7 +371,7 @@ def create_dataloader(
 
     # Use the dataset's batch iterator
     for batch in dataset.batch_iterator(
-        batch_size=batch_size, shuffle=True, seed=42, use_sample_prob=True
+        batch_size=batch_size, shuffle=True, seed=42, use_sample_prob=False
     ):
         batch_jax = {k: jnp.array(v) for k, v in batch.items()}
         yield batch_jax

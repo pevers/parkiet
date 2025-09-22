@@ -570,7 +570,7 @@ def main():
             batch_size=training_config.batch_size,
             shuffle=True,
             seed=42,
-            use_sample_prob=True,
+            use_sample_prob=False,
         )
 
         epoch_step = 0
