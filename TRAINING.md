@@ -212,6 +212,18 @@ The different loss channels show the hierarchical pattern explained by [Darefsky
 
 The training process typically takes 2-3 days on TPU v4 pods for the complete Dutch dataset.
 
+## Deployment and Inference
+
+Ideally we convert the model back to PyTorch and plug-and-play it into the Dia pipeline. There is already support for HuggingFace's Transformers, so we can directly use this and have an accessible interface. However, after converting the model to PyTorch, I noticed a significant performance degradation. The model was still able to generate speech, but the model is more fragile and quickly derails in more complex sentences. I suspect that there is a difference in the attention kernel between PyTorch and JAX. 
+
+How can we fix this?
+
+Well, I didn't want to get into writing custom kernels, so I spun up a 8xA100 machine on [Lambda](http://lambda.ai/) and fine-tuned the model for a couple thousand more steps. Luckily JAX supports CUDA, so with little tweaks to the mesh we can run the model. The final checkpoint is saved and can be used in the Dia pipeline.
+
+```
+<TODO>
+```
+
 ## Next Steps
 
 As described in the original paper there are some interesting next steps to explore. One of them is replacing the auto-regressive decoder with [Block Diffusion (BD3‑LMs)](https://m-arriola.com/bd3lms/): an approach that autoregressively models blocks while doing discrete diffusion within each block. It preserves AR-level quality and KV caching while enabling parallel token sampling for low latency streaming.

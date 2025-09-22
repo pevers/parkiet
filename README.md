@@ -19,7 +19,7 @@ Open-weights Dutch TTS based on the [Parakeet](https://jordandarefsky.com/blog/2
 * Use `[S1]`, `[S2]`, `[S3]`, `[S4]` to indicate the different speakers. Always start with `[S1]` and always alternate between [S1] and [S2] (i.e. [S1]... [S1]... is not good).
 * Prefer lower capital text prompts with punctuation. Write out digits as words. Even though the model should be able to handle some variety, it is better to stick close to the output of [WhisperD-NL](https://huggingface.co/pevers/whisperd-nl).
 * Slowing down can be encouraged by using `...` in the prompt.
-* Stuttering and disfluencies can be encouraged by using `eh`, `ehm`, `uh` or `uhm`.
+* Stuttering and disfluencies can be encouraged by using `uh`, `uhm`, `mmm`.
 * Laughter can be added with the `(laughs)` tag. However, use it sparingly because the model quickly derails for too many events.
 
 ## Quickstart

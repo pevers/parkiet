@@ -121,6 +121,10 @@ def create_model(
 
     if restored_params is not None:
         graphdef, state = nnx.split(model)
+        restored_params = jax.tree.map(
+            lambda x: jnp.asarray(x, dtype=param_dtype) if hasattr(x, "dtype") else x,
+            restored_params,
+        )
         nnx.replace_by_pure_dict(state, restored_params)
         model = nnx.merge(graphdef, state)
 
@@ -140,7 +144,11 @@ def save_distributed_checkpoint(
     """Save a distributed checkpoint to Google Cloud Storage."""
     checkpoint_path = f"{checkpoint_dir}/checkpoint_{step:06d}"
     sharded_state = nnx.state(model)
-    pure_dict_state = nnx.to_pure_dict(sharded_state)
+
+    # Gather sharded state to device 0 before converting to pure dict
+    gathered_state = jax.device_get(sharded_state)
+    pure_dict_state = nnx.to_pure_dict(gathered_state)
+
     checkpointer = ocp.StandardCheckpointer()
     checkpointer.save(checkpoint_path, pure_dict_state)
     checkpointer.wait_until_finished()
@@ -371,7 +379,7 @@ def create_dataloader(
 
     # Use the dataset's batch iterator
     for batch in dataset.batch_iterator(
-        batch_size=batch_size, shuffle=True, seed=42, use_sample_prob=False
+        batch_size=batch_size, shuffle=True, seed=42, use_sample_prob=True
     ):
         batch_jax = {k: jnp.array(v) for k, v in batch.items()}
         yield batch_jax
@@ -583,9 +591,8 @@ def main():
             logger.warning(
                 "Steps per epoch is 0! This will cause immediate epoch completion."
             )
-            steps_per_epoch = max(1, total_steps)  # Ensure at least 1 step per epoch
+            steps_per_epoch = max(1, total_steps)
 
-        # Create dataset once outside the epoch loop
         logger.info("Creating dataset...")
         dataset = create_dataset(
             config=dia_config_frz,
@@ -597,11 +604,7 @@ def main():
         step = 0
         for epoch in range(training_config.total_epochs):
             logger.info(f"Starting epoch {epoch}")
-
-            # Reset dataset for new epoch
             dataset.reset()
-
-            # Create dataloader
             batch_iterator = create_dataloader(
                 dataset,
                 training_config.batch_size,
@@ -609,7 +612,6 @@ def main():
 
             epoch_step = 0
             while epoch_step < steps_per_epoch:
-                # Start timing the step
                 step_start_time = time.time()
 
                 # Accumulate loss and metrics over gradient_accumulation_steps
