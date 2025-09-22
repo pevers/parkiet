@@ -28,14 +28,15 @@ example_prompts = [
     "[S1] hoeveel stemmen worden er ondersteund? [S2] nou, uhm, ik denk toch wel meer dan twee. [S3] ja, ja, d dat is het mooie aan dit model. [S4] ja klopt, het ondersteund tot vier verschillende stemmen per prompt.",
     "[S1] h h et is dus ook mogelijk, om eh ... uhm, heel veel t te st stotteren in een prompt.",
     # Voice cloning example
-    "[S1] je hebt maar weinig audio nodig om een stem te clonen de rest van deze tekst is uitgesproken door een computer. [S2] wauw, dat klinkt wel erg goed. [S1] ja, ik hoop dat je er wat aan hebt.",
+    #"[S1] je hebt maar weinig audio nodig om een stem te clonen de rest van deze tekst is uitgesproken door een computer. [S2] wauw, dat klinkt wel erg goed. [S1] ja, ik hoop dat je er wat aan hebt.",
+    "[S1] dit is nog een test waarin ik de hele tien seconden probeer vol te praten zodat ik genoeg audio heb zodat ik een stem kan clonen in Eleven Labs dit is wel angstaanjagend dat het zo goed werkt."
 ]
 
 output = model.generate_jit(
-    example_prompts[0],
+    example_prompts[3],
     # Provide an audio prompt for voice cloning
     # Make sure to prefix the prompt with the spoken audio provided for voice cloning
-    # audio_prompt="samples/clone.mp3",
+    audio_prompt="samples/clone_long.mp3",
     verbose=True,
     cfg_scale=3.0,
     temperature=1.8,
@@ -46,4 +47,4 @@ output = model.generate_jit(
     # max_tokens=800,
 )
 
-model.save_audio(f"clone.mp3", output)
+model.save_audio(f"clone_long.mp3", output)

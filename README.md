@@ -14,8 +14,6 @@ Open-weights Dutch TTS based on the [Parakeet](https://jordandarefsky.com/blog/2
 | [S1] je hebt maar weinig audio nodig om een stem te clonen de rest van deze tekst is uitgesproken door een computer. [S2] wauw, dat klinkt wel erg goed. [S1] ja, ik hoop dat je er wat aan hebt. | <video src="https://github.com/user-attachments/assets/f80d6b27-0719-4044-89cc-ae19230505ee">
 
 
-
-
 ## Generation Guidelines
 
 * Use `[S1]`, `[S2]`, `[S3]`, `[S4]` to indicate the different speakers. Always start with `[S1]` and always alternate between [S1] and [S2] (i.e. [S1]... [S1]... is not good).
