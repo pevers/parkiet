@@ -218,7 +218,7 @@ Ideally we convert the model back to PyTorch and plug-and-play it into the Dia p
 
 How can we fix this?
 
-Well, I didn't want to get into writing custom kernels, so I spun up a 8xA100 machine on [Lambda](http://lambda.ai/) and fine-tuned the model for a couple thousand more steps. Luckily JAX supports CUDA, so with little tweaks to the mesh we can run the model. The final checkpoint is saved and can be used in the Dia pipeline.
+Well, I didn't want to get into writing custom kernels, so I spun up a 8xA100 machine on [Lambda](http://lambda.ai/) and fine-tuned the model for a couple thousand more steps. Luckily JAX supports CUDA, so with little tweaks to the mesh we can run the model. The final checkpoint is saved and can be used in the Dia pipeline. To convert the model to PyTorch, we can use the [convert_to_torch.py](src/parkiet/convert_to_torch.py) script.
 
 ```
 <TODO>
