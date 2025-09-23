@@ -19,7 +19,8 @@ Training took around 2-3 days, and the total cost *can* be under $100.
   - [PyTorch to JAX Conversion](#pytorch-to-jax-conversion)  
 - [Training](#training)  
   - [Training Configuration](#training-configuration)  
-  - [Monitoring](#monitoring)  
+  - [Monitoring](#monitoring)
+- [Deployment and Inference](#deployment-and-inference)
 - [Next Steps](#next-steps)  
 
 ## Introduction
