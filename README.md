@@ -33,7 +33,7 @@ uv sync --extra tpu # For TPU
 uv sync --extra cuda # For CUDA
 
 # Download the checkpoint
-wget https://huggingface.co/pevers/parkiet/blob/main/dia-nl-v1.zip -O weights/dia-nl-v1.zip
+wget https://huggingface.co/pevers/parkiet/resolve/main/dia-nl-v1.zip?download=true -O weights/dia-nl-v1.zip
 
 # Create the checkpoint folder and unzip
 mkdir -p weights
@@ -52,7 +52,7 @@ uv run python src/parkiet/jax/inference.py
 uv sync # For CPU
 uv sync --extra cuda # For CUDA
 
-wget https://huggingface.co/pevers/parkiet/blob/main/dia-nl-v1.pth -O weights/dia-nl-v1.pth
+wget https://huggingface.co/pevers/parkiet/resolve/main/dia-nl-v1.pth?download=true -O weights/dia-nl-v1.pth
 uv run python src/parkiet/dia/inference.py
 ```
 
