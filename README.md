@@ -8,10 +8,10 @@ Open-weights Dutch TTS based on the [Parakeet](https://jordandarefsky.com/blog/2
 
 | Text | File |
 |---|---|
-| [S1] denk je dat je een open source model kan trainen met weinig geld en middelen? [S2] ja ik denk het wel. [S1] oh ja, hoe dan? [S2] nou kijk maar in de repo (laughs). | <video src="https://github.com/user-attachments/assets/3fd64933-1434-4a8c-924b-b0c55831df1f">
+| [S1] denk je dat je een open source model kan trainen met weinig geld en middelen? [S2] ja ik denk het wel. [S1] oh ja, hoe dan? [S2] nou kijk maar in de repo op Git Hub of Hugging Face. | <video src="https://github.com/user-attachments/assets/3fd64933-1434-4a8c-924b-b0c55831df1f">
 | [S1] hoeveel stemmen worden er ondersteund? [S2] nou, uhm, ik denk toch wel meer dan twee. [S3] ja, ja, d dat is het mooie aan dit model. [S4] ja klopt, het ondersteund tot vier verschillende stemmen per prompt. | <video src="https://github.com/user-attachments/assets/6e428840-ca65-4b24-a63d-b6358d08b2f8"> 
 | [S1] h h et is dus ook mogelijk, om eh ... uhm, heel veel t te st stotteren in een prompt. | <video src="https://github.com/user-attachments/assets/0217d156-3729-4f2d-b6ec-5f7e8ce3f050"> |
-| (laughs) luister, ik heb een mop, wat uhm, drinkt een webdesigner het liefst? [S2] nou? ... [S1] Earl Grey (laughs). [S2] (laughs). | <video src="https://github.com/user-attachments/assets/4de96f57-2bd2-4472-8b33-2d0839ec5f42">
+| [S1] (laughs) luister, ik heb een mop, wat uhm, drinkt een webdesigner het liefst? [S2] nou ... ? [S1] Earl Grey (laughs) . [S2] (laughs) heel goed. | <video src="https://github.com/user-attachments/assets/4de96f57-2bd2-4472-8b33-2d0839ec5f42">
 | [S1] je hebt maar weinig audio nodig om een stem te clonen de rest van deze tekst is uitgesproken door een computer. [S2] wauw, dat klinkt wel erg goed. [S1] ja, ik hoop dat je er wat aan hebt. | <video src="https://github.com/user-attachments/assets/f80d6b27-0719-4044-89cc-ae19230505ee">
 
 ## Generation Guidelines
@@ -21,8 +21,11 @@ Open-weights Dutch TTS based on the [Parakeet](https://jordandarefsky.com/blog/2
 * Slowing down can be encouraged by using `...` in the prompt.
 * Stuttering and disfluencies can be encouraged by using `uh`, `uhm`, `mmm`.
 * Laughter can be added with the `(laughs)` tag. However, use it sparingly because the model quickly derails for too many events.
+* Reduce hallucination by tuning the text prompts. The model can be brittle for unexpected events or tokens. Take a look at the example sentences and mimick the style.
 
 ## Quickstart
+
+The JAX model has the best performance in terms of quality, but requires a bit more setup, and is (for the moment) a little bit slower. The model is also ported back to PyTorch. However, I suspect that due to small differences in the attention kernel between PyTorch and JAX, the PyTorch model hallucinates more and generates strange artifacts more than the JAX model.
 
 ```bash
 uv sync # For CPU
@@ -41,8 +44,46 @@ unzip weights/dia-nl-v1.zip -d weights
 uv run python src/parkiet/jax/inference.py
 ```
 
-Notes:
-- We use the JAX model by default. The model is also ported back to PyTorch. However, I suspect that due to small differences in the attention kernel between PyTorch and JAX, the PyTorch model hallucinates more and generates strange artifacts more than the JAX model. You can download the PyTorch model from [HuggingFace](https://huggingface.co/pevers/parkiet/blob/main/dia-nl-v1.pth) and use it in the [Dia](https://github.com/nari-labs/dia) pipeline.
+<details>
+
+<summary>PyTorch</summary>
+
+```bash
+uv sync # For CPU
+uv sync --extra cuda # For CUDA
+
+wget https://huggingface.co/pevers/parkiet/blob/main/dia-nl-v1.pth -O weights/dia-nl-v1.pth
+uv run python src/parkiet/dia/inference.py
+```
+
+</details>
+
+<details>
+
+<summary>Dia Plug-and-Play Transformers</summary>
+
+NOTE: Tune the `cfg_scale` option and temperature to reduce hallucinations.
+
+```python
+from transformers import AutoProcessor, DiaForConditionalGeneration
+
+torch_device = "cuda"
+model_checkpoint = "pevers/parkiet/v1/"
+
+text = [
+    "[S1] denk je dat je een open source model kan trainen met weinig geld en middelen? [S2] ja ik denk het wel. [S1] oh ja, hoe dan? [S2] nou kijk maar in de repo op Git Hub of Hugging Face."
+]
+processor = AutoProcessor.from_pretrained(model_checkpoint)
+inputs = processor(text=text, padding=True, return_tensors="pt").to(torch_device)
+
+model = DiaForConditionalGeneration.from_pretrained(model_checkpoint).to(torch_device)
+outputs = model.generate(**inputs, max_new_tokens=3072, guidance_scale=3.0, temperature=1.8, top_p=0.90, top_k=50)
+
+outputs = processor.batch_decode(outputs)
+processor.save_audio(outputs, "example.mp3")
+```
+
+</details>
 
 ## ⚠️ Disclaimer
 This project offers a high-fidelity speech generation model intended for research and educational use. The following uses are strictly forbidden:
