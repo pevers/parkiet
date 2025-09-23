@@ -8,10 +8,10 @@ Open-weights Dutch TTS based on the [Parakeet](https://jordandarefsky.com/blog/2
 
 | Text | File |
 |---|---|
-| [S1] denk je dat je een open source model kan trainen met weinig geld en middelen? [S2] ja ik denk het wel. [S1] oh ja, hoe dan? [S2] nou kijk maar in de repo op Git Hub of Hugging Face. | <video src="https://github.com/user-attachments/assets/3fd64933-1434-4a8c-924b-b0c55831df1f">
+| [S1] denk je dat je een open source model kan trainen met weinig geld en middelen? [S2] ja ik denk het wel. [S1] oh ja, hoe dan? [S2] nou kijk maar in de repo op Git Hub of Hugging Face. |  <video src="https://github.com/user-attachments/assets/1b0ac1be-717e-4bdf-83a5-b5a501f67057">
 | [S1] hoeveel stemmen worden er ondersteund? [S2] nou, uhm, ik denk toch wel meer dan twee. [S3] ja, ja, d dat is het mooie aan dit model. [S4] ja klopt, het ondersteund tot vier verschillende stemmen per prompt. | <video src="https://github.com/user-attachments/assets/6e428840-ca65-4b24-a63d-b6358d08b2f8"> 
 | [S1] h h et is dus ook mogelijk, om eh ... uhm, heel veel t te st stotteren in een prompt. | <video src="https://github.com/user-attachments/assets/0217d156-3729-4f2d-b6ec-5f7e8ce3f050"> |
-| [S1] (laughs) luister, ik heb een mop, wat uhm, drinkt een webdesigner het liefst? [S2] nou ... ? [S1] Earl Grey (laughs) . [S2] (laughs) heel goed. | <video src="https://github.com/user-attachments/assets/4de96f57-2bd2-4472-8b33-2d0839ec5f42">
+| [S1] (laughs) luister, ik heb een mop, wat uhm, drinkt een webdesigner het liefst? [S2] nou ... ? [S1] Earl Grey (laughs) . [S2] (laughs) heel goed. | <video src="https://github.com/user-attachments/assets/a77e654a-4b2d-4e6e-959b-397d8dadf87a">
 | [S1] je hebt maar weinig audio nodig om een stem te clonen de rest van deze tekst is uitgesproken door een computer. [S2] wauw, dat klinkt wel erg goed. [S1] ja, ik hoop dat je er wat aan hebt. | <video src="https://github.com/user-attachments/assets/f80d6b27-0719-4044-89cc-ae19230505ee">
 
 ## Generation Guidelines
