@@ -28,7 +28,7 @@ dependencies = [
     "tensorboard>=2.19.0",
     "wandb>=0.21.1",
     "gcsfs>=2025.9.0",
-    "orbax-checkpoint>=0.11.18",
+    "orbax-checkpoint>=0.11.18"
 ]
 
 [project.optional-dependencies]
