@@ -500,8 +500,6 @@ class Dia:
             top_p=top_p,
             top_k=top_k,
             audio_eos_value=audio_eos_value,
-            log_sampling=True,  # Enable logging for debugging
-            step_idx=current_idx.item(),
         )
 
         pred_BxC = pred_BC.view(B, self.config.decoder_config.num_channels)

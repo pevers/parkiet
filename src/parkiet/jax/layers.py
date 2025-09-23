@@ -31,7 +31,7 @@ class MlpBlock(nnx.Module):
             use_bias=False,
             param_dtype=param_dtype,
             dtype=compute_dtype,
-            kernel_init=nnx.with_partitioning(ki, (None, None, "model")),
+            # kernel_init=nnx.with_partitioning(ki, (None, None, "model")),
             rngs=rngs,
         )
 
@@ -42,7 +42,7 @@ class MlpBlock(nnx.Module):
             use_bias=False,
             param_dtype=param_dtype,
             dtype=compute_dtype,
-            kernel_init=nnx.with_partitioning(ki, ("model", None)),
+            # kernel_init=nnx.with_partitioning(ki, ("model", None)),
             rngs=rngs,
         )
 
@@ -198,7 +198,7 @@ class CrossAttention(nnx.Module):
             use_bias=False,
             dtype=compute_dtype,
             param_dtype=param_dtype,
-            kernel_init=nnx.with_partitioning(ki, ("model", None, None)),
+            # kernel_init=nnx.with_partitioning(ki, ("model", None, None)),
             rngs=rngs,
         )
 
@@ -501,7 +501,7 @@ class EncoderLayer(nnx.Module):
             epsilon=enc_config.norm_eps,
             dtype=jnp.float32,
             param_dtype=param_dtype,
-            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("model",)),
+            # scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("model",)),
             rngs=rngs,
         )
         self.mlp = MlpBlock(
@@ -806,7 +806,7 @@ class Decoder(nnx.Module):
             epsilon=dec_config.norm_eps,
             dtype=jnp.float32,
             param_dtype=param_dtype,
-            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("model",)),
+            # scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("model",)),
             rngs=rngs,
         )
         ki = nnx.initializers.variance_scaling(1.0, "fan_in", "uniform")
@@ -817,7 +817,7 @@ class Decoder(nnx.Module):
             use_bias=False,
             param_dtype=param_dtype,
             dtype=compute_dtype,
-            kernel_init=nnx.with_partitioning(ki, (None, None, "model")),
+            # kernel_init=nnx.with_partitioning(ki, (None, None, "model")),
             rngs=rngs,
         )
 

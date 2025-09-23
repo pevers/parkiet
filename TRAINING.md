@@ -212,13 +212,13 @@ The different loss channels show the hierarchical pattern explained by [Darefsky
 
 The training process typically takes 2-3 days on TPU v4 pods for the complete Dutch dataset.
 
-## Inference
+## Deployment and Inference
 
-Now that the model is trained, we can use it to generate speech. First we convert it back to a single-device checkpoint in [convert_single_shard.py](src/parkiet/convert_single_shard.py). Then we can use it for inference. Ideally we convert it back to PyTorch, and there is a script for that in [convert_to_torch.py](src/parkiet/convert_to_torch.py). However, after running some tests I found that the JAX model is performing much better in terms of quality of speech. The PyTorch model seems to be hallucinating a lot more, e.g., it is generating strange artifacts when it starts derailing and is not able to recover.
+Ideally we convert the model back to PyTorch and plug-and-play it into the Dia pipeline. There is already support for HuggingFace's Transformers, so we can directly use this and have an accessible interface. However, after converting the model to PyTorch, I noticed a significant performance degradation. The model was still able to generate speech, but the model is more fragile and quickly derails in more complex sentences. I suspect that there is a difference in the attention kernel between PyTorch and JAX. 
 
-<EXAMPLE>
+How can we fix this?
 
-I suspect that this is caused by some attention kernel differences between JAX and PyTorch causing instability. Controlling the temperature and top-k sampling can help, but it is not a complete solution.
+Well, I didn't want to get into writing custom kernels, so I spun up a 8xA100 machine on [Lambda](http://lambda.ai/) and fine-tuned the model for a couple thousand more steps on CUDA hardware. Luckily JAX supports CUDA, so with little tweaks to the mesh we can run the model. However, **it didn't solve the problem**. So any more ideas (except fully retraining on CUDA hardware w/o JAX) are welcome.
 
 ## Next Steps
 
