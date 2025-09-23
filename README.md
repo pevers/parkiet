@@ -68,7 +68,7 @@ NOTE: Tune the `cfg_scale` option and temperature to reduce hallucinations.
 from transformers import AutoProcessor, DiaForConditionalGeneration
 
 torch_device = "cuda"
-model_checkpoint = "pevers/parkiet/v1/"
+model_checkpoint = "pevers/parkiet"
 
 text = [
     "[S1] denk je dat je een open source model kan trainen met weinig geld en middelen? [S2] ja ik denk het wel. [S1] oh ja, hoe dan? [S2] nou kijk maar in de repo op Git Hub of Hugging Face."

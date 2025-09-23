@@ -146,8 +146,9 @@ def save_distributed_checkpoint(
     sharded_state = nnx.state(model)
 
     # Gather sharded state to device 0 before converting to pure dict
-    gathered_state = jax.device_get(sharded_state)
-    pure_dict_state = nnx.to_pure_dict(gathered_state)
+    # gathered_state = jax.device_get(sharded_state)
+    # TODO: I can't remember if device_get was failing on multi-host TPU or not
+    pure_dict_state = nnx.to_pure_dict(sharded_state)
 
     checkpointer = ocp.StandardCheckpointer()
     checkpointer.save(checkpoint_path, pure_dict_state)
@@ -498,7 +499,7 @@ def main():
 
     compute_dtype = jnp.bfloat16
 
-    # config.json = 1.5B original model
+    # config.json = 1.6B original model
     # config.tiny.json = much smaller model for testing
     dia_config_frz = DiaConfig.load("config.json")
     logger.info(f"Config: {dia_config_frz}")
