@@ -1,4 +1,5 @@
 # Converts the checkpoint on a single CPU / GPU machine from a sharded multi-device checkpoint to a single-device checkpoint
+# NOTE: Must run in a CPU environment (uv sync) because I was too lazy to figure out how to run it in all environments
 
 import os
 
