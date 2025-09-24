@@ -6,7 +6,7 @@ torch.manual_seed(42)
 model = Dia.from_local(
     config_path="config.json",
     checkpoint_path="weights/dia-nl-v1.pth",
-    compute_dtype="bfloat16",
+    compute_dtype="float32",
     # device=torch.device("cpu")
 )
 
