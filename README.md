@@ -2,7 +2,7 @@
 
 ![Parkiet](images/parkiet.png)
 
-Open-weights Dutch TTS based on the [Parakeet](https://jordandarefsky.com/blog/2024/parakeet/) architecture, ported from [Dia](https://github.com/nari-labs/dia) to JAX for scalable training. A full walkthrough to train the model for your language on Google Cloud TPUs, can be found in the [TRAINING.md](TRAINING.md) doc. A comparison to ElevenLabs can be found at my [blog](https://peterevers.nl/posts/2025/09/parkiet/).
+Open-weights Dutch TTS based on the [Parakeet](https://jordandarefsky.com/blog/2024/parakeet/) architecture, ported from [Dia](https://github.com/nari-labs/dia) to JAX for scalable training. A full walkthrough to train the model for your language on Google Cloud TPUs, can be found in the [TRAINING.md](TRAINING.md) doc. A comparison to ElevenLabs can be found on my [blog](https://peterevers.nl/posts/2025/09/parkiet/).
 
 **Parkiet creates highly realistic voices from text**. You can guide the audio output to control emotion and tone. The model also supports nonverbal sounds (currently only laughter), and up to four different speakers per prompt. Voice cloning is also supported. Here are some samples.
 
@@ -42,7 +42,7 @@ uv sync --extra cuda # For CUDA
 uv sync # For CPU
 uv sync --extra cuda # For CUDA
 
-wget https://huggingface.co/pevers/parkiet/blob/main/dia-nl-v1.pth -O weights/dia-nl-v1.pth
+wget https://huggingface.co/pevers/parkiet/resolve/main/dia-nl-v1.pth?download=true -O weights/dia-nl-v1.pth
 uv run python src/parkiet/dia/inference.py
 ```
 
@@ -54,7 +54,7 @@ uv run python src/parkiet/dia/inference.py
 
 ```bash
 # Download the checkpoint
-wget https://huggingface.co/pevers/parkiet/blob/main/dia-nl-v1.zip -O weights/dia-nl-v1.zip
+wget https://huggingface.co/pevers/parkiet/resolve/main/dia-nl-v1.zip?download=true -O weights/dia-nl-v1.zip
 
 # Create the checkpoint folder and unzip
 mkdir -p weights

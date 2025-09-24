@@ -5,7 +5,7 @@ This guide explains how to train your own TTS model similar to **Parkiet**, a Du
 There may still be some rough edges, as I no longer have access to Google Cloud TPUs—so contributions are very welcome. It took me months to move from a Torch model to a fully working JAX training pipeline, and I hope this guide helps you avoid the same pitfalls.
 
 Training took around 2-3 days, and the total cost *can* be under $100.  
-*I say "can" because I wasn’t careful with Google Cloud egress fees, which ended up costing me about $400.*
+*I say "can" because I wasn’t careful with Google Cloud egress fees, which ended up costing me about $300.*
 
 # Contents
 
@@ -19,7 +19,8 @@ Training took around 2-3 days, and the total cost *can* be under $100.
   - [PyTorch to JAX Conversion](#pytorch-to-jax-conversion)  
 - [Training](#training)  
   - [Training Configuration](#training-configuration)  
-  - [Monitoring](#monitoring)  
+  - [Monitoring](#monitoring)
+- [Deployment and Inference](#deployment-and-inference)
 - [Next Steps](#next-steps)  
 
 ## Introduction
@@ -49,11 +50,11 @@ WhisperD-NL: "Het probleem is uhm complex eh"
 
 #### WhisperD-NL: Fine-tuned for Dutch Authenticity
 
-[WhisperD-NL](https://github.com/pevers/whisperd-nl) is a fine-tuned version of OpenAI’s whisper-large-v3, trained specifically to preserve Dutch disfluencies and natural speech patterns critical for TTS training. It was fine-tuned on the [Corpus Gesproken Nederlands](https://taalmaterialen.ivdnt.org/) (CGN), which contains 900 hours of high-quality Dutch speech. The dataset is available for non-commercial use from the Instituut voor Nederlandse Taal (IVDNT).  
+[WhisperD-NL](https://github.com/pevers/whisperd-nl) is a fine-tuned version of OpenAI’s whisper-large-v3, trained specifically to preserve Dutch disfluencies and natural speech patterns critical for TTS training. It was fine-tuned on the [Corpus Gesproken Nederlands](https://taalmaterialen.ivdnt.org/) (CGN), which contains 900 hours of high-quality Dutch speech. The dataset is available for non-commercial use from the Instituut voor Nederlandse Taal (IVDNT). WhisperD-NL can be fine-tuned on a RTX 5090 GPU in about 24 hours. Our pipeline also runs the [WhisperClean-NL](https://huggingface.co/pevers/whisper-clean-nl) model, which is simply the original whisper-large-v3 model with speaker tags added ([S1], [S2], etc.). The speaker tags are extracted using [PyAnnote](https://github.com/pyannote/pyannote-audio).
 
 Dutch tends to perform well on WER benchmarks, likely because of its similarity to English and the availability of datasets like CGN. For smaller languages, building a good disfluency model is more challenging—but even 10 hours of well-annotated data can yield strong results. WhisperD-NL was also trained to output speaker tags (`[S1]`, `[S2]`, etc.) and events like `(laugh)`.
 
-![WhisperD-NL WER](https://private-user-images.githubusercontent.com/266841/280740425-f4619d66-1058-4005-8f67-a9d811b77c62.svg?jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmF3LmdpdGh1YnVzZXJjb250ZW50LmNvbSIsImtleSI6ImtleTUiLCJleHAiOjE3NTgzODYzODgsIm5iZiI6MTc1ODM4NjA4OCwicGF0aCI6Ii8yNjY4NDEvMjgwNzQwNDI1LWY0NjE5ZDY2LTEwNTgtNDAwNS04ZjY3LWE5ZDgxMWI3N2M2Mi5zdmc_WC1BbXotQWxnb3JpdGhtPUFXUzQtSE1BQy1TSEEyNTYmWC1BbXotQ3JlZGVudGlhbD1BS0lBVkNPRFlMU0E1M1BRSzRaQSUyRjIwMjUwOTIwJTJGdXMtZWFzdC0xJTJGczMlMkZhd3M0X3JlcXVlc3QmWC1BbXotRGF0ZT0yMDI1MDkyMFQxNjM0NDhaJlgtQW16LUV4cGlyZXM9MzAwJlgtQW16LVNpZ25hdHVyZT1jZDk5ODQ2YmJhYzYwOTRjM2NiNDVmY2UyNjE1NTRiMDU4N2QxYjM5NDBkODE2MzJiZmJlNTEwMmU5ZjE3NGRkJlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCJ9.dENLRzvsRyctFQMsDhgojsOzt2UFg9NHZgPSwaBIQzA)
+![WhisperD-NL WER](images/wer.svg)
 
 On an RTX 5090 GPU, whisper-large-v3 runs efficiently with `bfloat16`, `torch.compile`, and flash attention, allowing processing of ~100 hours of data per hour.
 
