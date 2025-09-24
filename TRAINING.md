@@ -214,11 +214,13 @@ The training process typically takes 2-3 days on TPU v4 pods for the complete Du
 
 ## Deployment and Inference
 
-Ideally we convert the model back to PyTorch and plug-and-play it into the Dia pipeline. There is already support for HuggingFace's Transformers, so we can directly use this and have an accessible interface. However, after converting the model to PyTorch, I noticed a significant performance degradation. The model was still able to generate speech, but the model is more fragile and quickly derails in more complex sentences. I suspect that there is a difference in the attention kernel between PyTorch and JAX. 
+Ideally we convert the model back to PyTorch and plug-and-play it into the Dia pipeline. There is already support for HuggingFace's Transformers, so we can directly use this and have an accessible interface. ~~However, after converting the model to PyTorch, I noticed a significant performance degradation. The model was still able to generate speech, but the model is more fragile and quickly derails in more complex sentences. I suspect that there is a difference in the attention kernel between PyTorch and JAX. 
 
 How can we fix this?
 
 Well, I didn't want to get into writing custom kernels, so I spun up a 8xA100 machine on [Lambda](http://lambda.ai/) and fine-tuned the model for a couple thousand more steps on CUDA hardware. Luckily JAX supports CUDA, so with little tweaks to the mesh we can run the model. However, **it didn't solve the problem**. So any more ideas (except fully retraining on CUDA hardware w/o JAX) are welcome.
+
+EDIT: It seems to be solved, I accidentally converted all parameters to `bfloat16` for the PyTorch model that caused instability. It should now run on both PyTorch and JAX without any issues.
 
 ## Next Steps
 

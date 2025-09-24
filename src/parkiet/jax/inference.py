@@ -19,7 +19,7 @@ checkpoint_path = (Path("weights") / "dia-nl-v1").resolve()
 model = Dia.from_local(
     config_path="config.json",
     checkpoint_path=checkpoint_path.as_posix(),
-    compute_dtype="float32",
+    compute_dtype="bfloat16",
     param_dtype="float32",
 )
 

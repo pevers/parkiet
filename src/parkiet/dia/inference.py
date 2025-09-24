@@ -21,7 +21,7 @@ example_prompts = [
 ]
 
 output = model.generate(
-    example_prompts[2],
+    example_prompts[3],
     use_torch_compile=False,
     verbose=True,
     cfg_scale=3.0,

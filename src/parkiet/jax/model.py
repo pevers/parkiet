@@ -316,6 +316,17 @@ class Dia:
             # Use orbax to load checkpoint
             with ocp.StandardCheckpointer() as checkpointer:
                 restored_params = checkpointer.restore(checkpoint_path)
+                param_dtype = (
+                    isinstance(param_dtype, str)
+                    and ComputeDtype(param_dtype).to_dtype()
+                    or param_dtype
+                )
+                restored_params = jax.tree.map(
+                    lambda x: jnp.asarray(x, dtype=param_dtype)
+                    if hasattr(x, "dtype")
+                    else x,
+                    restored_params,
+                )
 
             # Update model parameters
             graphdef, state = nnx.split(dia.model)

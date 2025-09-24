@@ -25,26 +25,16 @@ Open-weights Dutch TTS based on the [Parakeet](https://jordandarefsky.com/blog/2
 
 ## Quickstart
 
-The JAX model has the best performance in terms of quality, but requires a bit more setup, and is (for the moment) a little bit slower. The model is also ported back to PyTorch. However, I suspect that due to small differences in the attention kernel between PyTorch and JAX, the PyTorch model hallucinates more and generates strange artifacts more than the JAX model.
+There are two flavours of the model. The original JAX model and the backported PyTorch model. The PyTorch model consumes less VRAM and is a bit faster, however it might suffer slightly more from hallucinations due to small differences in the attention kernel between PyTorch and JAX.
 
 ```bash
+# Make sure you have the runtime dependencies installed
+sudo apt-get install build-essential cmake protobuf-compiler libprotobuf-dev
+
 uv sync # For CPU
 uv sync --extra tpu # For TPU
 uv sync --extra cuda # For CUDA
-
-# Download the checkpoint
-wget https://huggingface.co/pevers/parkiet/blob/main/dia-nl-v1.zip -O weights/dia-nl-v1.zip
-
-# Create the checkpoint folder and unzip
-mkdir -p weights
-unzip weights/dia-nl-v1.zip -d weights
-
-# Run the inference demo
-# NOTE: Inference can take a while because of JAX compilation. Subsequent calls will be cached and much faster. I'm working on some performance improvements.
-uv run python src/parkiet/jax/inference.py
 ```
-
-<details>
 
 <summary>PyTorch</summary>
 
@@ -57,6 +47,34 @@ uv run python src/parkiet/dia/inference.py
 ```
 
 </details>
+
+<summary>JAX</summary>
+
+<details> 
+
+```bash
+# Download the checkpoint
+wget https://huggingface.co/pevers/parkiet/blob/main/dia-nl-v1.zip -O weights/dia-nl-v1.zip
+
+# Create the checkpoint folder and unzip
+mkdir -p weights
+unzip weights/dia-nl-v1.zip -d weights
+
+# Run the inference demo
+# NOTE: Inference can take a while because of JAX compilation. Subsequent calls will be cached and much faster. I'm working on some performance improvements.
+uv run python src/parkiet/jax/inference.py
+```
+
+</details>
+
+## Hardware Requirements
+
+| Framework | float32 VRAM | bfloat16 VRAM |
+|---|---:|---:|
+| JAX | ≥19 GB | ≥10GB |
+| PyTorch | ≥15 GB | ≥10GB |
+
+Note: `bfloat16` typically reduces VRAM usage versus `float32` on supported hardware to about 10GB. However, converting the full model to `bfloat16` causes more instability and hallucinations. Setting just the `compute_dtype` to `bfloat16` is a good compromise and is also done during training. We would like to reduce the VRAM requirements in a next training run.
 
 ## ⚠️ Disclaimer
 This project offers a high-fidelity speech generation model intended for research and educational use. The following uses are strictly forbidden:
