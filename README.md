@@ -36,6 +36,8 @@ uv sync --extra tpu # For TPU
 uv sync --extra cuda # For CUDA
 ```
 
+<details>
+
 <summary>PyTorch</summary>
 
 ```bash
@@ -48,9 +50,9 @@ uv run python src/parkiet/dia/inference.py
 
 </details>
 
-<summary>JAX</summary>
-
 <details> 
+
+<summary>JAX</summary>
 
 ```bash
 # Download the checkpoint
