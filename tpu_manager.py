@@ -41,7 +41,7 @@ def create_tpu(name: str) -> bool:
         name,
         f"--zone={TPU_CONFIG['zone']}",
         f"--accelerator-type={TPU_CONFIG['type']}",
-        "--version=tpu-ubuntu2204-base",
+        "--version=v2-alpha-tpuv5",
         "--format=json",
     ]
 
