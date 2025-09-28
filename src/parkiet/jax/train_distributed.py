@@ -82,7 +82,7 @@ class TrainingConfig:
     """Configuration for training parameters."""
 
     def __init__(self, **kwargs):
-        self.batch_size: int = kwargs.get("batch_size", 18)
+        self.batch_size: int = kwargs.get("batch_size", 16)
         # Learning rate is small because we are fine-tuning on an existing (English) model
         self.learning_rate: float = kwargs.get("learning_rate", 4e-5)
         self.warmup_steps: int = kwargs.get("warmup_steps", 500)
@@ -104,8 +104,14 @@ class TrainingConfig:
 
 def load_checkpoint(checkpoint_path: str) -> dict:
     """Load checkpoint outside of JIT."""
+    change_sharding_abstract_state = jax.tree_util.tree_map(
+        set_sharding, abstract_state)
+    restored = ckptr.restore(
+        path / '1',
+        args=ocp.args.StandardRestore(change_sharding_abstract_state),
+    )
     with ocp.StandardCheckpointer() as checkpointer:
-        restored_params = checkpointer.restore(checkpoint_path)
+        restored_params = checkpointer.restore(checkpoint_path, )
     return restored_params
 
 
