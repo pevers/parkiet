@@ -163,7 +163,7 @@ def create_optimizer(
     warmup_steps: int,
     total_steps: int,
     max_grad_norm: float = 1.0,
-) -> nnx.Optimizer:
+) -> nnx.ModelAndOptimizer:
     """Create an optimizer with gradient clipping and learning rate schedule."""
     schedule = create_cosine_schedule_with_warmup(
         learning_rate=learning_rate,
@@ -184,7 +184,7 @@ def create_optimizer(
         ),
     )
 
-    optimizer = nnx.Optimizer(model, tx)
+    optimizer = nnx.ModelAndOptimizer(model, tx)
     return optimizer
 
 
@@ -352,7 +352,7 @@ def compute_gradients_step(
 
 @nnx.jit(static_argnames=("num_accumulation_steps"))
 def apply_accumulated_gradients(
-    optimizer: nnx.Optimizer, accumulated_grads: dict, num_accumulation_steps: int
+    optimizer: nnx.ModelAndOptimizer, accumulated_grads: dict, num_accumulation_steps: int
 ) -> None:
     """Apply accumulated gradients scaled by the number of accumulation steps."""
     # Scale gradients by the number of accumulation steps
