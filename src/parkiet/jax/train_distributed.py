@@ -105,14 +105,6 @@ class TrainingConfig:
 def load_checkpoint(checkpoint_path: str) -> dict:
     """Load checkpoint outside of JIT."""
 
-    # abstract_state = jax.tree_util.tree_map(ocp.utils.to_shape_dtype_struct, state)
-    # sharding = NamedSharding(mesh, P("data"))
-    # def set_sharding(x: jnp.ShapeDtypeStruct):
-    #     return x.update(sharding=sharding)
-
-    # change_sharding_abstract_state = jax.tree_util.tree_map(
-    #     set_sharding, abstract_state)
-
     with ocp.StandardCheckpointer() as checkpointer:
         restored_params = checkpointer.restore(checkpoint_path)
     return restored_params
@@ -534,7 +526,7 @@ def main():
             config={
                 "architecture": "Dia",
                 "dataset": "AudioText",
-                "epochs": 6,
+                "epochs": 3,
             },
         )
     else:
@@ -552,7 +544,7 @@ def main():
         rngs = nnx.Rngs(42)
         model = create_model(
             dia_config_frz,
-            param_dtype=jnp.float32,
+            param_dtype=jnp.bfloat16,
             compute_dtype=compute_dtype,
             restored_params=restored_params,
             rngs=rngs,
