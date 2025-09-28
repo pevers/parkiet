@@ -78,10 +78,10 @@ class TrainingConfig:
     """Configuration for training parameters."""
 
     def __init__(self, **kwargs):
-        self.batch_size: int = kwargs.get("batch_size", 16)
+        self.batch_size: int = kwargs.get("batch_size", 24)
         # Learning rate is small because we are fine-tuning on an existing (English) model
         self.learning_rate: float = kwargs.get("learning_rate", 4e-5)
-        self.warmup_steps: int = kwargs.get("warmup_steps", 2000)
+        self.warmup_steps: int = kwargs.get("warmup_steps", 500)
         self.total_epochs: int = kwargs.get("total_epochs", 3)
         # GA is high because the TPUs are not big enough for a larger batch size
         self.gradient_accumulation_steps: int = kwargs.get(

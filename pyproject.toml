@@ -5,21 +5,49 @@ description = "Parkiet is a fine-tuned version of Parakeet on Dutch audio data"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "descript-audio-codec>=1.0.0",
-    "numba==0.61.2", # Force version for transitive dependency in descript-audio-codec
-    "gradio>=5.25.2",
     "huggingface-hub>=0.30.2",
     "numpy>=2.2.4",
-    "pydantic>=2.11.3",
     "soundfile>=0.13.1",
     "transformers>=4.56.2",
     "librosa>=0.11.0",
-    "pyannote.audio>=3.1.1",
-    "pyarrow>=20.0.0",
-    "python-ulid>=3.0.0",
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0"
+]
+
+[project.optional-dependencies]
+pytorch = [
+    "descript-audio-codec>=1.0.0",
+    "numba==0.61.2", # Force version for transitive dependency in descript-audio-codec
+    "gradio>=5.25.2",
+    "pydantic>=2.11.3",
+    "pyannote.audio>=3.1.1"
+]
+jax = [
     "jax>=0.7.2",
     "flax>=0.12.0",
     "orbax-export>=0.0.8",
+    "orbax-checkpoint>=0.11.25"
+]
+cuda = [
+    "jax[cuda12]>=0.7.2",
+    "flax>=0.12.0",
+    "orbax-export>=0.0.8",
+    "orbax-checkpoint>=0.11.25",
+    "descript-audio-codec>=1.0.0",
+    "numba==0.61.2", # Force version for transitive dependency in descript-audio-codec
+    "gradio>=5.25.2",
+    "pydantic>=2.11.3",
+    "pyannote.audio>=3.1.1"
+]
+tpu = [
+    "jax[tpu]>=0.7.2",
+    "flax>=0.12.0",
+    "orbax-export>=0.0.8",
+    "orbax-checkpoint>=0.11.25"
+]
+training = [
+    "pyarrow>=20.0.0",
+    "python-ulid>=3.0.0",
     "psycopg[binary]>=3.2.9",
     "redis>=6.2.0",
     "google-cloud-storage>=3.2.0",
@@ -27,16 +55,11 @@ dependencies = [
     "psutil>=7.0.0",
     "tensorboard>=2.19.0",
     "wandb>=0.21.1",
-    "gcsfs>=2025.9.0",
-    "orbax-checkpoint>=0.11.25"
+    "gcsfs>=2025.9.0"
 ]
-
-[project.optional-dependencies]
-cuda = [
-  "jax[cuda12]>=0.7.2",
-]
-tpu = [
-  "jax[tpu]>=0.7.2",
+blackwell = [
+    "torch>2.6",
+    "torchaudio>2.6"
 ]
 
 [build-system]
