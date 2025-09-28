@@ -53,7 +53,7 @@ jax_logger.setLevel(logging.WARNING)
 
 def make_mesh_dp_mp():
     """Create mesh for data and model parallel sharding."""
-    procs = jax.process_count()  # 4 for t4-32
+    procs = jax.process_count()  # 4 for t4-32 or 2 for t5p-16
     local = jax.local_device_count()  # 4 for t4-32
     total_devices = jax.device_count()
 
@@ -65,8 +65,8 @@ def make_mesh_dp_mp():
     )
 
     # For data and model parallel
-    devs = np.array(jax.devices())  # .reshape(procs, local)
-    mesh = Mesh(devs, axis_names=("data",))
+    devs = np.array(jax.devices())  # For t4-32: .reshape(procs, local), For t5p-16: just jax.devices()
+    mesh = Mesh(devs, axis_names=("data",)) # For t4-32: ("data", "model"), For t5p-16: ("data",)
     logger.info(f"Created mesh with shape {mesh.shape} and axes {mesh.axis_names}")
     return mesh
 
@@ -78,14 +78,14 @@ class TrainingConfig:
     """Configuration for training parameters."""
 
     def __init__(self, **kwargs):
-        self.batch_size: int = kwargs.get("batch_size", 8)
+        self.batch_size: int = kwargs.get("batch_size", 16)
         # Learning rate is small because we are fine-tuning on an existing (English) model
         self.learning_rate: float = kwargs.get("learning_rate", 4e-5)
         self.warmup_steps: int = kwargs.get("warmup_steps", 2000)
         self.total_epochs: int = kwargs.get("total_epochs", 3)
         # GA is high because the TPUs are not big enough for a larger batch size
         self.gradient_accumulation_steps: int = kwargs.get(
-            "gradient_accumulation_steps", 16
+            "gradient_accumulation_steps", 8
         )
         self.checkpoint_dir: str = kwargs.get(
             "checkpoint_dir", "gs://parkiet-training/weights"
@@ -356,7 +356,7 @@ def apply_accumulated_gradients(
 ) -> None:
     """Apply accumulated gradients scaled by the number of accumulation steps."""
     # Scale gradients by the number of accumulation steps
-    scaled_grads = jax.tree_map(lambda g: g / num_accumulation_steps, accumulated_grads)
+    scaled_grads = jax.tree.map(lambda g: g / num_accumulation_steps, accumulated_grads)
     optimizer.update(scaled_grads)
 
 
@@ -638,7 +638,7 @@ def main():
                         if accumulated_grads is None:
                             accumulated_grads = grads
                         else:
-                            accumulated_grads = jax.tree_map(
+                            accumulated_grads = jax.tree.map(
                                 lambda acc_g, g: acc_g + g, accumulated_grads, grads
                             )
 

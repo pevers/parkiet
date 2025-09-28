@@ -30,7 +30,7 @@ def main():
     checkpointer = ocp.StandardCheckpointer()
     restored_state = checkpointer.restore(checkpoint_path)
 
-    state_host = jax.tree_util.tree_map(
+    state_host = jax.tree_util.tree.map(
         lambda x: jax.device_get(x) if isinstance(x, jax.Array) else x,
         restored_state,
     )

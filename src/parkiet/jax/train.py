@@ -599,7 +599,7 @@ def main():
                     if accumulated_grads is None:
                         accumulated_grads = grads
                     else:
-                        accumulated_grads = jax.tree_map(
+                        accumulated_grads = jax.tree.map(
                             lambda acc_g, g: acc_g + g, accumulated_grads, grads
                         )
 

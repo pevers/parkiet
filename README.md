@@ -34,6 +34,10 @@ There are three flavours of the model. The HF transformers version (recommended)
 ### HF Transformers (Recommended)
 
 ```bash
+# Make sure you have the runtime dependencies installed for JAX
+# You can also extract the HF inference code and the transformers dependency
+sudo apt-get install build-essential cmake protobuf-compiler libprotobuf-dev
+
 uv sync # For CPU
 uv sync --extra cuda # For CUDA
 
