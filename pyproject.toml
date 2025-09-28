@@ -37,10 +37,6 @@ cuda = [
 tpu = [
   "jax[tpu]>=0.7.2",
 ]
-blackwell = [
-  "torch>2.6",
-  "torchaudio>2.6"
-]
 
 [build-system]
 requires = ["hatchling"]
