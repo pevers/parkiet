@@ -552,7 +552,7 @@ def main():
         rngs = nnx.Rngs(42)
         model = create_model(
             dia_config_frz,
-            param_dtype=jnp.bfloat16,
+            param_dtype=jnp.float32,
             compute_dtype=compute_dtype,
             restored_params=restored_params,
             rngs=rngs,
