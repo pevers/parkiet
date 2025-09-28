@@ -129,13 +129,14 @@ def create_model(
         "pre_ca_norm",
         "pre_mlp_norm",
         "norm",
-        "timescale"
+        "timescale",
     ]
 
     if restored_params is not None:
         graphdef, state = nnx.split(model)
+
         def convert_dtype(path, x):
-            path = jax.tree_util.keystr(path, simple=True, separator='/')
+            path = jax.tree_util.keystr(path, simple=True, separator="/")
             if all(path.find(p) == -1 for p in forbidden_paths):
                 return jnp.asarray(x, dtype=param_dtype)
             return x
