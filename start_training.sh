@@ -25,7 +25,7 @@ git pull
 
 # Sync dependencies
 echo "Syncing dependencies..."
-uv sync
+uv sync --extra tpu
 source .venv/bin/activate
 
 # Check if .env file exists and export WANDB_API_KEY
