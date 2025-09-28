@@ -65,8 +65,12 @@ def make_mesh_dp_mp():
     )
 
     # For data and model parallel
-    devs = np.array(jax.devices())  # For t4-32: .reshape(procs, local), For t5p-16: just jax.devices()
-    mesh = Mesh(devs, axis_names=("data",)) # For t4-32: ("data", "model"), For t5p-16: ("data",)
+    devs = np.array(
+        jax.devices()
+    )  # For t4-32: .reshape(procs, local), For t5p-16: just jax.devices()
+    mesh = Mesh(
+        devs, axis_names=("data",)
+    )  # For t4-32: ("data", "model"), For t5p-16: ("data",)
     logger.info(f"Created mesh with shape {mesh.shape} and axes {mesh.axis_names}")
     return mesh
 
@@ -78,7 +82,7 @@ class TrainingConfig:
     """Configuration for training parameters."""
 
     def __init__(self, **kwargs):
-        self.batch_size: int = kwargs.get("batch_size", 24)
+        self.batch_size: int = kwargs.get("batch_size", 18)
         # Learning rate is small because we are fine-tuning on an existing (English) model
         self.learning_rate: float = kwargs.get("learning_rate", 4e-5)
         self.warmup_steps: int = kwargs.get("warmup_steps", 500)
@@ -352,7 +356,9 @@ def compute_gradients_step(
 
 @nnx.jit(static_argnames=("num_accumulation_steps"))
 def apply_accumulated_gradients(
-    optimizer: nnx.ModelAndOptimizer, accumulated_grads: dict, num_accumulation_steps: int
+    optimizer: nnx.ModelAndOptimizer,
+    accumulated_grads: dict,
+    num_accumulation_steps: int,
 ) -> None:
     """Apply accumulated gradients scaled by the number of accumulation steps."""
     # Scale gradients by the number of accumulation steps

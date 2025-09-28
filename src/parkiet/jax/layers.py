@@ -563,15 +563,17 @@ class Encoder(nnx.Module):
         )
 
         # Create encoder layers
-        self.layers = nnx.List([
-            EncoderLayer(
-                config=self.config,
-                compute_dtype=self.compute_dtype,
-                param_dtype=param_dtype,
-                rngs=rngs,
-            )
-            for _ in range(enc_config.num_hidden_layers)
-        ])
+        self.layers = nnx.List(
+            [
+                EncoderLayer(
+                    config=self.config,
+                    compute_dtype=self.compute_dtype,
+                    param_dtype=param_dtype,
+                    rngs=rngs,
+                )
+                for _ in range(enc_config.num_hidden_layers)
+            ]
+        )
 
         self.norm = nnx.RMSNorm(
             num_features=enc_config.hidden_size,
@@ -778,31 +780,35 @@ class Decoder(nnx.Module):
         self.num_channels = dec_config.num_channels
         self.num_layers = dec_config.num_hidden_layers
 
-        self.embeddings = nnx.List([
-            nnx.Embed(
-                num_embeddings=dec_config.vocab_size,
-                features=dec_config.hidden_size,
-                dtype=self.compute_dtype,
-                param_dtype=param_dtype,
-                # embedding_init=nnx.with_partitioning(
-                #     nnx.initializers.variance_scaling(1.0, "fan_in", "uniform"),
-                #     ("model", None),
-                # ),
-                rngs=rngs,
-            )
-            for _ in range(self.num_channels)
-        ])
+        self.embeddings = nnx.List(
+            [
+                nnx.Embed(
+                    num_embeddings=dec_config.vocab_size,
+                    features=dec_config.hidden_size,
+                    dtype=self.compute_dtype,
+                    param_dtype=param_dtype,
+                    # embedding_init=nnx.with_partitioning(
+                    #     nnx.initializers.variance_scaling(1.0, "fan_in", "uniform"),
+                    #     ("model", None),
+                    # ),
+                    rngs=rngs,
+                )
+                for _ in range(self.num_channels)
+            ]
+        )
 
-        self.layers = nnx.List([
-            DecoderLayer(
-                config=self.config,
-                compute_dtype=self.compute_dtype,
-                param_dtype=param_dtype,
-                rngs=rngs,
-            )
-            for _ in range(self.num_layers)
-        ])
-        
+        self.layers = nnx.List(
+            [
+                DecoderLayer(
+                    config=self.config,
+                    compute_dtype=self.compute_dtype,
+                    param_dtype=param_dtype,
+                    rngs=rngs,
+                )
+                for _ in range(self.num_layers)
+            ]
+        )
+
         self.norm = nnx.RMSNorm(
             num_features=dec_config.hidden_size,
             epsilon=dec_config.norm_eps,
