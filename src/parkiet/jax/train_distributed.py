@@ -126,6 +126,9 @@ def create_model(
     if restored_params is not None:
         graphdef, state = nnx.split(model)
 
+        # Convert current state to pure dict for tree comparison
+        current_state_dict = nnx.to_pure_dict(state)
+
         # Only convert parameters that should use param_dtype, preserve others
         def selective_dtype_convert(restored_val, current_val):
             if not hasattr(restored_val, "dtype"):
@@ -146,7 +149,7 @@ def create_model(
         converted_params = jax.tree.map(
             selective_dtype_convert,
             restored_params,
-            state,
+            current_state_dict,
             is_leaf=lambda x: isinstance(x, (nnx.Param, nnx.Variable))
         )
         nnx.replace_by_pure_dict(state, converted_params)
