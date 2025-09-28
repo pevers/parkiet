@@ -10,7 +10,7 @@ jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
 jax.config.update(
     "jax_persistent_cache_enable_xla_caches", "xla_gpu_per_fusion_autotune_cache_dir"
 )
-jax.distributed.initialize()
+#jax.distributed.initialize()
 
 from parkiet.jax.audio import apply_audio_delay, build_delay_indices
 
