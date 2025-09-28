@@ -7,6 +7,10 @@ PROJECT_DIR="$HOME/parkiet"
 
 PATH="$HOME/.local/bin:$PATH"
 
+export ACCELERATOR_TYPE="v5p-16"
+export RUNTIME_VERSION="v2-alpha-tpuv5"
+
+
 # Check if repository exists, clone if not
 if [ ! -d "$PROJECT_DIR" ]; then
     echo "Repository not found at $PROJECT_DIR"
