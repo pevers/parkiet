@@ -104,14 +104,17 @@ class TrainingConfig:
 
 def load_checkpoint(checkpoint_path: str) -> dict:
     """Load checkpoint outside of JIT."""
-    change_sharding_abstract_state = jax.tree_util.tree_map(
-        set_sharding, abstract_state)
-    restored = ckptr.restore(
-        path / '1',
-        args=ocp.args.StandardRestore(change_sharding_abstract_state),
-    )
+
+    # abstract_state = jax.tree_util.tree_map(ocp.utils.to_shape_dtype_struct, state)
+    # sharding = NamedSharding(mesh, P("data"))
+    # def set_sharding(x: jnp.ShapeDtypeStruct):
+    #     return x.update(sharding=sharding)
+
+    # change_sharding_abstract_state = jax.tree_util.tree_map(
+    #     set_sharding, abstract_state)
+
     with ocp.StandardCheckpointer() as checkpointer:
-        restored_params = checkpointer.restore(checkpoint_path, )
+        restored_params = checkpointer.restore(checkpoint_path)
     return restored_params
 
 
@@ -541,7 +544,7 @@ def main():
     # This needs to happen on all processes
     checkpoint_path = (Path("weights") / "dia-nl-v1").resolve().as_posix()
     logger.info(f"Loading checkpoint from {checkpoint_path}")
-    restored_params = load_checkpoint(checkpoint_path)
+    restored_params = load_checkpoint(checkpoint_path, restored_params, mesh)
 
     with mesh:
         # Create sharded model with same rng key for all processes
