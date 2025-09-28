@@ -23,17 +23,26 @@ Open-weights Dutch TTS based on the [Parakeet](https://jordandarefsky.com/blog/2
 * Laughter can be added with the `(laughs)` tag. However, use it sparingly because the model quickly derails for too many events.
 * Reduce hallucination by tuning the text prompts. The model can be brittle for unexpected events or tokens. Take a look at the example sentences and mimick the style.
 
+## News
+
+**September 28, 2025**: Added tensorsafe format support allowing the model to run directly in the Dia pipeline without conversion.
+
 ## Quickstart
 
-There are two flavours of the model. The original JAX model and the backported PyTorch model. The PyTorch model consumes less VRAM and is a bit faster, however it might suffer slightly more from hallucinations due to small differences in the attention kernel between PyTorch and JAX.
+There are three flavours of the model. The HF transformers version (recommended), the original JAX model, and the backported PyTorch model. The HF transformers version is the easiest to use and integrates seamlessly with the Hugging Face ecosystem.
+
+### HF Transformers (Recommended)
 
 ```bash
-# Make sure you have the runtime dependencies installed
+# Make sure you have the runtime dependencies installed for JAX
+# You can also extract the HF inference code and the transformers dependency
 sudo apt-get install build-essential cmake protobuf-compiler libprotobuf-dev
 
 uv sync # For CPU
-uv sync --extra tpu # For TPU
 uv sync --extra cuda # For CUDA
+
+# Run the inference demo with HF transformers
+uv run python src/parkiet/dia/inference_hf.py
 ```
 
 <details>
@@ -41,6 +50,9 @@ uv sync --extra cuda # For CUDA
 <summary>PyTorch</summary>
 
 ```bash
+# Make sure you have the runtime dependencies installed for JAX
+sudo apt-get install build-essential cmake protobuf-compiler libprotobuf-dev
+
 uv sync # For CPU
 uv sync --extra cuda # For CUDA
 
@@ -50,11 +62,17 @@ uv run python src/parkiet/dia/inference.py
 
 </details>
 
-<details> 
+<details>
 
 <summary>JAX</summary>
 
 ```bash
+# Make sure you have the runtime dependencies installed for JAX
+sudo apt-get install build-essential cmake protobuf-compiler libprotobuf-dev
+
+uv sync --extra tpu # For TPU
+uv sync --extra cuda # For CUDA
+
 # Download the checkpoint
 wget https://huggingface.co/pevers/parkiet/resolve/main/dia-nl-v1.zip?download=true -O weights/dia-nl-v1.zip
 

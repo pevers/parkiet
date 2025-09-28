@@ -53,7 +53,7 @@ jax_logger.setLevel(logging.WARNING)
 
 def make_mesh_dp_mp():
     """Create mesh for data and model parallel sharding."""
-    procs = jax.process_count()  # 4 for t4-32
+    procs = jax.process_count()  # 4 for t4-32 or 2 for t5p-16
     local = jax.local_device_count()  # 4 for t4-32
     total_devices = jax.device_count()
 
@@ -65,8 +65,12 @@ def make_mesh_dp_mp():
     )
 
     # For data and model parallel
-    devs = np.array(jax.devices()).reshape(procs, local)
-    mesh = Mesh(devs, axis_names=("data", "model"))
+    devs = np.array(
+        jax.devices()
+    )  # For t4-32: .reshape(procs, local), For t5p-16: just jax.devices()
+    mesh = Mesh(
+        devs, axis_names=("data",)
+    )  # For t4-32: ("data", "model"), For t5p-16: ("data",)
     logger.info(f"Created mesh with shape {mesh.shape} and axes {mesh.axis_names}")
     return mesh
 
@@ -78,20 +82,19 @@ class TrainingConfig:
     """Configuration for training parameters."""
 
     def __init__(self, **kwargs):
-        self.batch_size: int = kwargs.get("batch_size", 4)
+        self.batch_size: int = kwargs.get("batch_size", 16)
         # Learning rate is small because we are fine-tuning on an existing (English) model
         self.learning_rate: float = kwargs.get("learning_rate", 4e-5)
-        self.warmup_steps: int = kwargs.get("warmup_steps", 2000)
+        self.warmup_steps: int = kwargs.get("warmup_steps", 500)
         self.total_epochs: int = kwargs.get("total_epochs", 3)
         # GA is high because the TPUs are not big enough for a larger batch size
         self.gradient_accumulation_steps: int = kwargs.get(
-            "gradient_accumulation_steps", 32
+            "gradient_accumulation_steps", 8
         )
         self.checkpoint_dir: str = kwargs.get(
             "checkpoint_dir", "gs://parkiet-training/weights"
         )
-        self.checkpoint_every_steps: int = kwargs.get("checkpoint_every_steps", 3000)
-        self.sample_every_steps: int = kwargs.get("sample_every_steps", 100)
+        self.checkpoint_every_steps: int = kwargs.get("checkpoint_every_steps", 1000)
         self.log_every: int = kwargs.get("log_every", 100)
         self.max_grad_norm: float = kwargs.get("max_grad_norm", 1.0)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -109,8 +112,8 @@ def load_checkpoint(checkpoint_path: str) -> dict:
 @nnx.jit(static_argnames=("dia_config", "compute_dtype", "param_dtype"))
 def create_model(
     dia_config: DiaConfig,
-    compute_dtype: jnp.dtype = jnp.float32,
-    param_dtype: jnp.dtype = jnp.float32,
+    compute_dtype: jnp.dtype = jnp.bfloat16,
+    param_dtype: jnp.dtype = jnp.bfloat16,
     restored_params: dict | None = None,
     rngs: nnx.Rngs = nnx.Rngs(0),
 ) -> DiaModel:
@@ -119,10 +122,27 @@ def create_model(
         dia_config, compute_dtype=compute_dtype, param_dtype=param_dtype, rngs=rngs
     )
 
+    # Explicitly exclude these paths from conversion
+    forbidden_paths = [
+        "post_sa_norm",
+        "pre_sa_norm",
+        "pre_ca_norm",
+        "pre_mlp_norm",
+        "norm",
+        "timescale",
+    ]
+
     if restored_params is not None:
         graphdef, state = nnx.split(model)
-        restored_params = jax.tree.map(
-            lambda x: jnp.asarray(x, dtype=param_dtype) if hasattr(x, "dtype") else x,
+
+        def convert_dtype(path, x):
+            path = jax.tree_util.keystr(path, simple=True, separator="/")
+            if all(path.find(p) == -1 for p in forbidden_paths):
+                return jnp.asarray(x, dtype=param_dtype)
+            return x
+
+        restored_params = jax.tree.map_with_path(
+            convert_dtype,
             restored_params,
         )
         nnx.replace_by_pure_dict(state, restored_params)
@@ -164,7 +184,7 @@ def create_optimizer(
     warmup_steps: int,
     total_steps: int,
     max_grad_norm: float = 1.0,
-) -> nnx.Optimizer:
+) -> nnx.ModelAndOptimizer:
     """Create an optimizer with gradient clipping and learning rate schedule."""
     schedule = create_cosine_schedule_with_warmup(
         learning_rate=learning_rate,
@@ -185,7 +205,7 @@ def create_optimizer(
         ),
     )
 
-    optimizer = nnx.Optimizer(model, tx)
+    optimizer = nnx.ModelAndOptimizer(model, tx)
     return optimizer
 
 
@@ -353,11 +373,13 @@ def compute_gradients_step(
 
 @nnx.jit(static_argnames=("num_accumulation_steps"))
 def apply_accumulated_gradients(
-    optimizer: nnx.Optimizer, accumulated_grads: dict, num_accumulation_steps: int
+    optimizer: nnx.ModelAndOptimizer,
+    accumulated_grads: dict,
+    num_accumulation_steps: int,
 ) -> None:
     """Apply accumulated gradients scaled by the number of accumulation steps."""
     # Scale gradients by the number of accumulation steps
-    scaled_grads = jax.tree_map(lambda g: g / num_accumulation_steps, accumulated_grads)
+    scaled_grads = jax.tree.map(lambda g: g / num_accumulation_steps, accumulated_grads)
     optimizer.update(scaled_grads)
 
 
@@ -520,7 +542,7 @@ def main():
             config={
                 "architecture": "Dia",
                 "dataset": "AudioText",
-                "epochs": 6,
+                "epochs": 3,
             },
         )
     else:
@@ -528,7 +550,7 @@ def main():
 
     # Load checkpoint outside the mesh context (before JIT)
     # This needs to happen on all processes
-    checkpoint_path = (Path("weights") / "jax-v1").resolve().as_posix()
+    checkpoint_path = (Path("weights") / "dia-nl-v1").resolve().as_posix()
     logger.info(f"Loading checkpoint from {checkpoint_path}")
     restored_params = load_checkpoint(checkpoint_path)
 
@@ -538,7 +560,7 @@ def main():
         rngs = nnx.Rngs(42)
         model = create_model(
             dia_config_frz,
-            param_dtype=jnp.float32,
+            param_dtype=jnp.bfloat16,
             compute_dtype=compute_dtype,
             restored_params=restored_params,
             rngs=rngs,
@@ -639,7 +661,7 @@ def main():
                         if accumulated_grads is None:
                             accumulated_grads = grads
                         else:
-                            accumulated_grads = jax.tree_map(
+                            accumulated_grads = jax.tree.map(
                                 lambda acc_g, g: acc_g + g, accumulated_grads, grads
                             )
 

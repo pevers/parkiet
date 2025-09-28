@@ -3,23 +3,22 @@ name = "parkiet"
 version = "0.1.0"
 description = "Parkiet is a fine-tuned version of Parakeet on Dutch audio data"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "descript-audio-codec>=1.0.0",
     "numba==0.61.2", # Force version for transitive dependency in descript-audio-codec
-    "gradio>=5.25.2",
     "huggingface-hub>=0.30.2",
     "numpy>=2.2.4",
     "pydantic>=2.11.3",
     "soundfile>=0.13.1",
-    "transformers>=4.53.3",
+    "transformers>=4.56.2",
     "librosa>=0.11.0",
     "pyannote.audio>=3.1.1",
     "pyarrow>=20.0.0",
     "python-ulid>=3.0.0",
-    "jax>=0.5.3",
-    "flax>=0.10.6",
-    "orbax-export>=0.0.6",
+    "jax>=0.7.2",
+    "flax>=0.12.0",
+    "orbax-export>=0.0.8",
     "psycopg[binary]>=3.2.9",
     "redis>=6.2.0",
     "google-cloud-storage>=3.2.0",
@@ -28,15 +27,15 @@ dependencies = [
     "tensorboard>=2.19.0",
     "wandb>=0.21.1",
     "gcsfs>=2025.9.0",
-    "orbax-checkpoint>=0.11.18"
+    "orbax-checkpoint>=0.11.25"
 ]
 
 [project.optional-dependencies]
 cuda = [
-  "jax[cuda12]>=0.5.3",
+  "jax[cuda12]>=0.7.2",
 ]
 tpu = [
-  "jax[tpu]>=0.5.3",
+  "jax[tpu]>=0.7.2",
 ]
 
 [build-system]
@@ -63,12 +62,6 @@ torchaudio = [
 dev-dependencies = [
     "pytest>=8.4.1",
     "ruff>=0.11.12",
-]
-# Install latest to support Blackwell chipset
-override-dependencies = [
-  "torch>2.6",
-  "torchaudio>2.6",
-  "protobuf>=3.20.1"
 ]
 
 [tool.pytest.ini_options]

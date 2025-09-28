@@ -6,7 +6,7 @@ import subprocess
 import time
 import json
 
-TPU_CONFIG = {"type": "v4-32", "zone": "us-central2-b", "spot": False}
+TPU_CONFIG = {"type": "v5p-16", "zone": "us-east5-a", "spot": False}
 
 
 def run_gcloud_command(command: list[str]) -> dict:
@@ -41,7 +41,7 @@ def create_tpu(name: str) -> bool:
         name,
         f"--zone={TPU_CONFIG['zone']}",
         f"--accelerator-type={TPU_CONFIG['type']}",
-        "--version=tpu-ubuntu2204-base",
+        "--version=v2-alpha-tpuv5",
         "--format=json",
     ]
 
@@ -87,7 +87,7 @@ def wait_for_tpu_ready(name: str, timeout: int = 300) -> bool:
 def main():
     """Main function - keep retrying until TPU is created successfully."""
     attempt = 1
-    retry_delay = 60  # seconds
+    retry_delay = 30  # seconds
 
     while True:
         print(f"\n{'=' * 60}")
@@ -95,7 +95,7 @@ def main():
         print(f"Target: {TPU_CONFIG['type']} in {TPU_CONFIG['zone']}")
         print(f"{'=' * 60}")
 
-        tpu_name = f"v4-32-tpu-{int(time.time())}"
+        tpu_name = f"{TPU_CONFIG['type']}-tpu-{int(time.time())}"
 
         if create_tpu(tpu_name):
             print("\n🎉 TPU creation request successful!")

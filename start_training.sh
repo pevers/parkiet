@@ -5,6 +5,12 @@ set -e
 REPO_URL="https://github.com/peter/parkiet.git"  # Update with actual repo URL
 PROJECT_DIR="$HOME/parkiet"
 
+PATH="$HOME/.local/bin:$PATH"
+
+export ACCELERATOR_TYPE="v5p-16"
+export RUNTIME_VERSION="v2-alpha-tpuv5"
+
+
 # Check if repository exists, clone if not
 if [ ! -d "$PROJECT_DIR" ]; then
     echo "Repository not found at $PROJECT_DIR"
@@ -23,7 +29,7 @@ git pull
 
 # Sync dependencies
 echo "Syncing dependencies..."
-uv sync
+uv sync --extra tpu
 source .venv/bin/activate
 
 # Check if .env file exists and export WANDB_API_KEY
