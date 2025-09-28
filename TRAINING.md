@@ -195,6 +195,8 @@ def create_model(...):
   ...
 ```
 
+EDIT: We are now using t5-16 instances instead of t4-32. This makes it possible to just use Data Parallelism. Our mesh is now only sharded on the "data" axis and we have commented out all `kernel_init` and `scale_init` parameters in the model.
+
 ### Monitoring
 
 I've used Weights & Biases to monitor the training process. You can get a free account [here](https://wandb.ai/) and get a free "Pro" trial for a month. It works well to monitor training progress and it has automatic support for monitoring TPU device metrics.
