@@ -104,7 +104,6 @@ class TrainingConfig:
 
 def load_checkpoint(checkpoint_path: str) -> dict:
     """Load checkpoint outside of JIT."""
-
     with ocp.StandardCheckpointer() as checkpointer:
         restored_params = checkpointer.restore(checkpoint_path)
     return restored_params
@@ -123,36 +122,29 @@ def create_model(
         dia_config, compute_dtype=compute_dtype, param_dtype=param_dtype, rngs=rngs
     )
 
+    # Explicitly exclude these paths from conversion
+    forbidden_paths = [
+        "post_sa_norm",
+        "pre_sa_norm",
+        "pre_ca_norm",
+        "pre_mlp_norm",
+        "norm",
+        "timescale"
+    ]
+
     if restored_params is not None:
         graphdef, state = nnx.split(model)
+        def convert_dtype(path, x):
+            path = jax.tree_util.keystr(path, simple=True, separator='/')
+            if all(path.find(p) == -1 for p in forbidden_paths):
+                return jnp.asarray(x, dtype=param_dtype)
+            return x
 
-        # Convert current state to pure dict for tree comparison
-        current_state_dict = nnx.to_pure_dict(state)
-
-        # Only convert parameters that should use param_dtype, preserve others
-        def selective_dtype_convert(restored_val, current_val):
-            if not hasattr(restored_val, "dtype"):
-                return restored_val
-
-            # For nnx.Param, check if the current model expects param_dtype or float32
-            if isinstance(current_val, nnx.Param):
-                # If current param is float32 (like norm layers), keep it float32
-                if current_val.dtype == jnp.float32:
-                    return jnp.asarray(restored_val, dtype=jnp.float32)
-                # Otherwise use param_dtype (for Linear layers, embeddings, etc)
-                else:
-                    return jnp.asarray(restored_val, dtype=param_dtype)
-
-            # For Variables (like RotaryEmbedding.timescale), preserve original dtype
-            return jnp.asarray(restored_val, dtype=restored_val.dtype)
-
-        converted_params = jax.tree.map(
-            selective_dtype_convert,
+        restored_params = jax.tree.map_with_path(
+            convert_dtype,
             restored_params,
-            current_state_dict,
-            is_leaf=lambda x: isinstance(x, (nnx.Param, nnx.Variable))
         )
-        nnx.replace_by_pure_dict(state, converted_params)
+        nnx.replace_by_pure_dict(state, restored_params)
         model = nnx.merge(graphdef, state)
 
     # TODO: This is probably not needed as the model is already sharded
