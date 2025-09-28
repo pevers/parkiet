@@ -65,7 +65,7 @@ def make_mesh_dp_mp():
     )
 
     # For data and model parallel
-    devs = np.array(jax.devices()) #.reshape(procs, local)
+    devs = np.array(jax.devices())  # .reshape(procs, local)
     mesh = Mesh(devs, axis_names=("data",))
     logger.info(f"Created mesh with shape {mesh.shape} and axes {mesh.axis_names}")
     return mesh
@@ -527,7 +527,7 @@ def main():
 
     # Load checkpoint outside the mesh context (before JIT)
     # This needs to happen on all processes
-    checkpoint_path = (Path("weights") / "checkpoint_060000" / "checkpoint_name").resolve().as_posix()
+    checkpoint_path = (Path("weights") / "dia-nl-v1").resolve().as_posix()
     logger.info(f"Loading checkpoint from {checkpoint_path}")
     restored_params = load_checkpoint(checkpoint_path)
 

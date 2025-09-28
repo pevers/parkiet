@@ -85,7 +85,9 @@ def convert_dia_model_to_hf(checkpoint_path, verbose=False):
             Whether to print information during conversion.
     """
     # Download from HF Hub if checkpoint_path is None
-    checkpoint_path = snapshot_download(repo_id=checkpoint_path, allow_patterns=["*.pth", "*.safetensors"])
+    checkpoint_path = snapshot_download(
+        repo_id=checkpoint_path, allow_patterns=["*.pth", "*.safetensors"]
+    )
     print(f"Downloaded checkpoint from Hugging Face Hub: {checkpoint_path}")
 
     # Initialize base model with default config == 1.6B model
@@ -127,7 +129,9 @@ def convert_dia_model_to_hf(checkpoint_path, verbose=False):
         elif re.sub(r"\d+", "*", key).removeprefix("model.") in shape_mappings:
             # add exception to the head
             if "logits_dense" in key:
-                key = re.sub("decoder.logits_dense", "logits_dense", key).removeprefix("model.")
+                key = re.sub("decoder.logits_dense", "logits_dense", key).removeprefix(
+                    "model."
+                )
 
             # dense general
             if key in hf_model_keys:
@@ -136,7 +140,9 @@ def convert_dia_model_to_hf(checkpoint_path, verbose=False):
                 try:
                     tensor = tensor.reshape(target_shape[1], target_shape[0]).T
                     if verbose:
-                        print(f"{key}: transpose reshaped from {tensor_shape} to {target_shape}")
+                        print(
+                            f"{key}: transpose reshaped from {tensor_shape} to {target_shape}"
+                        )
                 except Exception as e:
                     print(f"WARNING: Could not reshape {key}: {e}")
 
@@ -159,10 +165,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # # Required parameters
     parser.add_argument(
-        "--checkpoint_path", type=str, default="pevers/parkiet", help="Path to the downloaded checkpoints"
+        "--checkpoint_path",
+        type=str,
+        default="pevers/parkiet",
+        help="Path to the downloaded checkpoints",
     )
     parser.add_argument(
-        "--pytorch_dump_folder_path", default="weights/safetensors", type=str, help="Path to the output PyTorch model."
+        "--pytorch_dump_folder_path",
+        default="weights/safetensors",
+        type=str,
+        help="Path to the output PyTorch model.",
     )
     parser.add_argument(
         "--convert_preprocessor",
