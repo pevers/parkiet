@@ -5,6 +5,8 @@ set -e
 REPO_URL="https://github.com/peter/parkiet.git"  # Update with actual repo URL
 PROJECT_DIR="$HOME/parkiet"
 
+PATH="$HOME/.local/bin:$PATH"
+
 # Check if repository exists, clone if not
 if [ ! -d "$PROJECT_DIR" ]; then
     echo "Repository not found at $PROJECT_DIR"
