@@ -17,9 +17,9 @@ dependencies = [
     "pyannote.audio>=3.1.1",
     "pyarrow>=20.0.0",
     "python-ulid>=3.0.0",
-    "jax>=0.5.3",
-    "flax>=0.10.6",
-    "orbax-export>=0.0.6",
+    "jax>=0.7.2",
+    "flax>=0.12.0",
+    "orbax-export>=0.0.8",
     "psycopg[binary]>=3.2.9",
     "redis>=6.2.0",
     "google-cloud-storage>=3.2.0",
@@ -28,7 +28,7 @@ dependencies = [
     "tensorboard>=2.19.0",
     "wandb>=0.21.1",
     "gcsfs>=2025.9.0",
-    "orbax-checkpoint>=0.11.18"
+    "orbax-checkpoint>=0.11.25"
 ]
 
 [project.optional-dependencies]
