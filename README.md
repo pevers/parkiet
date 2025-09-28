@@ -23,6 +23,10 @@ Open-weights Dutch TTS based on the [Parakeet](https://jordandarefsky.com/blog/2
 * Laughter can be added with the `(laughs)` tag. However, use it sparingly because the model quickly derails for too many events.
 * Reduce hallucination by tuning the text prompts. The model can be brittle for unexpected events or tokens. Take a look at the example sentences and mimick the style.
 
+## News
+
+**September 28, 2025**: Added tensorsafe format support allowing the model to run directly in the Dia pipeline without conversion.
+
 ## Quickstart
 
 There are two flavours of the model. The original JAX model and the backported PyTorch model. The PyTorch model consumes less VRAM and is a bit faster, however it might suffer slightly more from hallucinations due to small differences in the attention kernel between PyTorch and JAX.
