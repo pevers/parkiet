@@ -125,11 +125,31 @@ def create_model(
 
     if restored_params is not None:
         graphdef, state = nnx.split(model)
-        restored_params = jax.tree.map(
-            lambda x: jnp.asarray(x, dtype=param_dtype) if hasattr(x, "dtype") else x,
+
+        # Only convert parameters that should use param_dtype, preserve others
+        def selective_dtype_convert(restored_val, current_val):
+            if not hasattr(restored_val, "dtype"):
+                return restored_val
+
+            # For nnx.Param, check if the current model expects param_dtype or float32
+            if isinstance(current_val, nnx.Param):
+                # If current param is float32 (like norm layers), keep it float32
+                if current_val.dtype == jnp.float32:
+                    return jnp.asarray(restored_val, dtype=jnp.float32)
+                # Otherwise use param_dtype (for Linear layers, embeddings, etc)
+                else:
+                    return jnp.asarray(restored_val, dtype=param_dtype)
+
+            # For Variables (like RotaryEmbedding.timescale), preserve original dtype
+            return jnp.asarray(restored_val, dtype=restored_val.dtype)
+
+        converted_params = jax.tree.map(
+            selective_dtype_convert,
             restored_params,
+            state,
+            is_leaf=lambda x: isinstance(x, (nnx.Param, nnx.Variable))
         )
-        nnx.replace_by_pure_dict(state, restored_params)
+        nnx.replace_by_pure_dict(state, converted_params)
         model = nnx.merge(graphdef, state)
 
     # TODO: This is probably not needed as the model is already sharded
