@@ -52,7 +52,7 @@ WhisperD-NL: "Het probleem is uhm complex eh"
 
 [WhisperD-NL](https://github.com/pevers/whisperd-nl) is a fine-tuned version of OpenAI’s whisper-large-v3, trained specifically to preserve Dutch disfluencies and natural speech patterns critical for TTS training. It was fine-tuned on the [Corpus Gesproken Nederlands](https://taalmaterialen.ivdnt.org/) (CGN), which contains 900 hours of high-quality Dutch speech. The dataset is available for non-commercial use from the Instituut voor Nederlandse Taal (IVDNT). WhisperD-NL can be fine-tuned on a RTX 5090 GPU in about 24 hours. Our pipeline also runs the [WhisperClean-NL](https://huggingface.co/pevers/whisper-clean-nl) model, which is simply the original whisper-large-v3 model with speaker tags added ([S1], [S2], etc.). The speaker tags are extracted using [PyAnnote](https://github.com/pyannote/pyannote-audio).
 
-Dutch tends to perform well on WER benchmarks, likely because of its similarity to English and the availability of datasets like CGN. For smaller languages, building a good disfluency model is more challenging—but even 10 hours of well-annotated data can yield strong results. WhisperD-NL was also trained to output speaker tags (`[S1]`, `[S2]`, etc.) and events like `(laugh)`.
+Dutch tends to perform well on WER benchmarks, likely because of its similarity to English and the availability of datasets like CGN. For smaller languages, building a good disfluency model is more challenging—but even 10 hours of well-annotated data can yield strong results. WhisperD-NL was also trained to output speaker tags (`[S1]`, `[S2]`, etc.) and events like `(laughs)`.
 
 ![WhisperD-NL WER](images/wer.svg)
 

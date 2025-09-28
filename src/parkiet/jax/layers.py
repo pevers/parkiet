@@ -387,7 +387,7 @@ class SelfAttention(nnx.Module):
             param_dtype=param_dtype,
             dtype=compute_dtype,
             use_bias=False,
-            kernel_init=nnx.with_partitioning(ki, ("model", None, None)),
+            # kernel_init=nnx.with_partitioning(ki, ("model", None, None)),
             rngs=rngs,
         )
 
@@ -578,7 +578,7 @@ class Encoder(nnx.Module):
             epsilon=enc_config.norm_eps,
             dtype=jnp.float32,
             param_dtype=param_dtype,
-            scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("model",)),
+            # scale_init=nnx.with_partitioning(nnx.initializers.ones_init(), ("model",)),
             rngs=rngs,
         )
 

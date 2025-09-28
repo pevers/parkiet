@@ -65,8 +65,8 @@ def make_mesh_dp_mp():
     )
 
     # For data and model parallel
-    devs = np.array(jax.devices()).reshape(procs, local)
-    mesh = Mesh(devs, axis_names=("data", "model"))
+    devs = np.array(jax.devices()) #.reshape(procs, local)
+    mesh = Mesh(devs, axis_names=("data",))
     logger.info(f"Created mesh with shape {mesh.shape} and axes {mesh.axis_names}")
     return mesh
 
@@ -78,20 +78,19 @@ class TrainingConfig:
     """Configuration for training parameters."""
 
     def __init__(self, **kwargs):
-        self.batch_size: int = kwargs.get("batch_size", 4)
+        self.batch_size: int = kwargs.get("batch_size", 8)
         # Learning rate is small because we are fine-tuning on an existing (English) model
         self.learning_rate: float = kwargs.get("learning_rate", 4e-5)
         self.warmup_steps: int = kwargs.get("warmup_steps", 2000)
         self.total_epochs: int = kwargs.get("total_epochs", 3)
         # GA is high because the TPUs are not big enough for a larger batch size
         self.gradient_accumulation_steps: int = kwargs.get(
-            "gradient_accumulation_steps", 32
+            "gradient_accumulation_steps", 16
         )
         self.checkpoint_dir: str = kwargs.get(
             "checkpoint_dir", "gs://parkiet-training/weights"
         )
-        self.checkpoint_every_steps: int = kwargs.get("checkpoint_every_steps", 3000)
-        self.sample_every_steps: int = kwargs.get("sample_every_steps", 100)
+        self.checkpoint_every_steps: int = kwargs.get("checkpoint_every_steps", 1000)
         self.log_every: int = kwargs.get("log_every", 100)
         self.max_grad_norm: float = kwargs.get("max_grad_norm", 1.0)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -109,8 +108,8 @@ def load_checkpoint(checkpoint_path: str) -> dict:
 @nnx.jit(static_argnames=("dia_config", "compute_dtype", "param_dtype"))
 def create_model(
     dia_config: DiaConfig,
-    compute_dtype: jnp.dtype = jnp.float32,
-    param_dtype: jnp.dtype = jnp.float32,
+    compute_dtype: jnp.dtype = jnp.bfloat16,
+    param_dtype: jnp.dtype = jnp.bfloat16,
     restored_params: dict | None = None,
     rngs: nnx.Rngs = nnx.Rngs(0),
 ) -> DiaModel:
@@ -528,7 +527,7 @@ def main():
 
     # Load checkpoint outside the mesh context (before JIT)
     # This needs to happen on all processes
-    checkpoint_path = (Path("weights") / "jax-v1").resolve().as_posix()
+    checkpoint_path = (Path("weights") / "checkpoint_060000" / "checkpoint_name").resolve().as_posix()
     logger.info(f"Loading checkpoint from {checkpoint_path}")
     restored_params = load_checkpoint(checkpoint_path)
 
@@ -538,7 +537,7 @@ def main():
         rngs = nnx.Rngs(42)
         model = create_model(
             dia_config_frz,
-            param_dtype=jnp.float32,
+            param_dtype=jnp.bfloat16,
             compute_dtype=compute_dtype,
             restored_params=restored_params,
             rngs=rngs,
