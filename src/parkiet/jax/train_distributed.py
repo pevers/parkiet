@@ -544,7 +544,7 @@ def main():
     # This needs to happen on all processes
     checkpoint_path = (Path("weights") / "dia-nl-v1").resolve().as_posix()
     logger.info(f"Loading checkpoint from {checkpoint_path}")
-    restored_params = load_checkpoint(checkpoint_path, restored_params, mesh)
+    restored_params = load_checkpoint(checkpoint_path)
 
     with mesh:
         # Create sharded model with same rng key for all processes
