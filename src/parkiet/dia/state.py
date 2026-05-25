@@ -52,12 +52,7 @@ class EncoderInferenceState:
     attn_mask: torch.Tensor
 
     @classmethod
-    def new(
-        cls,
-        config: DiaConfig,
-        cond_src: torch.Tensor,
-        batch_multiplier: int = 2,
-    ) -> "EncoderInferenceState":
+    def new(cls, config: DiaConfig, cond_src: torch.Tensor) -> "EncoderInferenceState":
         """Creates EtorchrInferenceParams from DiaConfig and a device."""
         device = cond_src.device
 
@@ -66,9 +61,7 @@ class EncoderInferenceState:
             dtype=torch.float32,
             device=device,
         ).unsqueeze(0)
-        padding_mask = (cond_src.squeeze(1) != 0).to(device).repeat_interleave(
-            batch_multiplier, dim=0
-        )
+        padding_mask = (cond_src.squeeze(1) != 0).to(device).repeat_interleave(2, dim=0)
         attn_mask = create_attn_mask(
             padding_mask, padding_mask, device, is_causal=False
         )
@@ -94,13 +87,12 @@ class KVCache(torch.nn.Module):
         head_dim: int,
         dtype: torch.dtype,
         device: torch.device,
-        batch_multiplier: int = 2,
         k: torch.Tensor | None = None,
         v: torch.Tensor | None = None,
     ):
         k = (
             torch.zeros(
-                (batch_multiplier * batch_size, num_heads, max_len, head_dim),
+                (2 * batch_size, num_heads, max_len, head_dim),
                 dtype=dtype,
                 device=device,
             )
@@ -109,7 +101,7 @@ class KVCache(torch.nn.Module):
         )
         v = (
             torch.zeros(
-                (batch_multiplier * batch_size, num_heads, max_len, head_dim),
+                (2 * batch_size, num_heads, max_len, head_dim),
                 dtype=dtype,
                 device=device,
             )
@@ -124,13 +116,12 @@ class KVCache(torch.nn.Module):
     @classmethod
     def from_kv(cls, k: torch.Tensor, v: torch.Tensor) -> "KVCache":
         return cls(
-            batch_size=k.shape[0],
+            batch_size=k.shape[0] // 2,
             num_heads=k.shape[1],
             max_len=k.shape[2],
             head_dim=k.shape[3],
             dtype=k.dtype,
             device=k.device,
-            batch_multiplier=1,
             k=k,
             v=v,
         )
@@ -172,27 +163,21 @@ class DecoderInferenceState:
         dec_cross_attn_cache: list[KVCache],
         compute_dtype: torch.dtype,
         max_generation_length: Optional[int] = None,
-        batch_multiplier: int = 2,
     ) -> "DecoderInferenceState":
         """Creates DecoderInferenceParams from DiaConfig and a device."""
         device = enc_out.device
         max_audio_len = (
             max_generation_length or config.decoder_config.max_position_embeddings
         )
-        batch_size = enc_out.shape[0] // batch_multiplier
+        batch_size = enc_out.shape[0] // 2
 
         dec_positions = torch.full(
-            (batch_multiplier * batch_size, 1),
-            fill_value=0,
-            dtype=torch.int32,
-            device=device,
+            (2 * batch_size, 1), fill_value=0, dtype=torch.int32, device=device
         )
         causal_mask = torch.tril(
             torch.ones(max_audio_len, max_audio_len, dtype=torch.bool, device=device)
         )
-        dec_mask = torch.ones(
-            (batch_multiplier * batch_size, 1), dtype=torch.bool, device=device
-        )
+        dec_mask = torch.ones((2 * batch_size, 1), dtype=torch.bool, device=device)
         cross_attn_mask = create_attn_mask(
             dec_mask, enc_state.padding_mask, device, is_causal=False
         )
@@ -205,7 +190,6 @@ class DecoderInferenceState:
                 config.decoder_config.head_dim,
                 compute_dtype,
                 device,
-                batch_multiplier=batch_multiplier,
             )
             for _ in range(config.decoder_config.num_hidden_layers)
         ]

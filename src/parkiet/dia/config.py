@@ -142,11 +142,6 @@ class DiaConfig(BaseModel):
     model_type: str = Field(default="dia")
     norm_eps: float = Field(default=1e-5)
     pad_token_id: int = Field(default=1025)
-    speaker_conditioning_enabled: bool = Field(default=False)
-    speaker_conditioning_mode: str = Field(default="encoder_decoder_additive")
-    speaker_embedding_dim: int = Field(default=256, ge=1)
-    num_speakers: int = Field(default=0, ge=0)
-    default_speaker_id: int = Field(default=0, ge=0)
     torch_dtype: str = Field(default="float32")
     transformers_version: str = Field(default="4.53.0.dev0")
 

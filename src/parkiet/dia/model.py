@@ -1,5 +1,4 @@
 import time
-from math import ceil
 from enum import Enum
 from typing import Callable
 
@@ -21,7 +20,6 @@ from .state import DecoderInferenceState, DecoderOutput, EncoderInferenceState
 
 DEFAULT_SAMPLE_RATE = 44100
 SAMPLE_RATE_RATIO = 512
-DEFAULT_PROMPT_TRIM_CONTEXT_FRAMES = 128
 
 
 def _get_default_device():
@@ -136,42 +134,12 @@ class Dia:
         self.dac_model = None
         self._compiled_step = None
         self.load_dac = load_dac
-        self.last_generate_metadata: dict = {}
 
         if not self.load_dac:
             print("Warning: DAC model will not be loaded. This is not recommended.")
 
         if torch.cuda.is_available():
             torch.backends.cuda.matmul.allow_tf32 = True
-
-    def _resolve_speaker_id_batch(
-        self,
-        batch_size: int,
-        speaker_id: int | list[int] | None,
-    ) -> list[int] | None:
-        if not self.config.speaker_conditioning_enabled:
-            return None
-
-        if self.config.num_speakers <= 0:
-            raise ValueError(
-                "speaker conditioning is enabled but config.num_speakers is not positive"
-            )
-
-        if speaker_id is None:
-            resolved = [self.config.default_speaker_id] * batch_size
-        elif isinstance(speaker_id, list):
-            if len(speaker_id) != batch_size:
-                raise ValueError("Number of speaker IDs must match batch size")
-            resolved = [int(item) for item in speaker_id]
-        else:
-            resolved = [int(speaker_id)] * batch_size
-
-        for item in resolved:
-            if item < 0 or item >= self.config.num_speakers:
-                raise ValueError(
-                    f"speaker_id {item} is out of range for num_speakers={self.config.num_speakers}"
-                )
-        return resolved
 
     @classmethod
     def from_local(
@@ -209,13 +177,6 @@ class Dia:
             dia.model.load_state_dict(state_dict)
         except FileNotFoundError:
             raise FileNotFoundError(f"Checkpoint file not found at {checkpoint_path}")
-        except RuntimeError as e:
-            if dia.config.speaker_conditioning_enabled:
-                raise RuntimeError(
-                    "Failed to load speaker-conditioned checkpoint. "
-                    "speaker_conditioning_enabled=True requires a checkpoint with speaker conditioning weights."
-                ) from e
-            raise
         except Exception as e:
             raise RuntimeError(
                 f"Error loading checkpoint from {checkpoint_path}"
@@ -408,8 +369,6 @@ class Dia:
         text: torch.Tensor,
         audio_prompts: list[torch.Tensor | None],
         max_tokens: int | None = None,
-        disable_cfg: bool = False,
-        speaker_ids: list[int] | None = None,
         attn_fn: Callable = F.scaled_dot_product_attention,
     ):
         """Initializes the model state for generation.
@@ -431,42 +390,13 @@ class Dia:
         """
         batch_size = text.shape[0]
 
+        enc_input_uncond = torch.zeros_like(text)
         enc_input_cond = text
-        if disable_cfg:
-            enc_input = enc_input_cond.view(batch_size, -1)
-            batch_multiplier = 1
-        else:
-            enc_input_uncond = torch.zeros_like(text)
-            stacked_inputs = torch.stack([enc_input_uncond, enc_input_cond], dim=1)
-            enc_input = stacked_inputs.view(2 * batch_size, -1)
-            batch_multiplier = 2
+        stacked_inputs = torch.stack([enc_input_uncond, enc_input_cond], dim=1)
+        enc_input = stacked_inputs.view(2 * batch_size, -1)
 
-        enc_state = EncoderInferenceState.new(
-            self.config,
-            enc_input_cond,
-            batch_multiplier=batch_multiplier,
-        )
-        encoder_speaker_condition = None
-        decoder_speaker_condition = None
-        if self.config.speaker_conditioning_enabled:
-            if speaker_ids is None:
-                raise ValueError("speaker_ids are required when speaker conditioning is enabled")
-            speaker_ids_tensor = torch.tensor(
-                speaker_ids,
-                dtype=torch.long,
-                device=self.device,
-            )
-            if not disable_cfg:
-                speaker_ids_tensor = speaker_ids_tensor.repeat_interleave(2, dim=0)
-            encoder_speaker_condition, decoder_speaker_condition = self.model.get_speaker_condition(
-                speaker_ids_tensor
-            )
-
-        encoder_out = self.model.encoder(
-            enc_input,
-            enc_state,
-            speaker_condition=encoder_speaker_condition,
-        )
+        enc_state = EncoderInferenceState.new(self.config, enc_input_cond)
+        encoder_out = self.model.encoder(enc_input, enc_state)
 
         dec_cross_attn_cache = self.model.decoder.precompute_cross_attn_cache(
             encoder_out
@@ -478,7 +408,6 @@ class Dia:
             dec_cross_attn_cache,
             self.compute_dtype,
             max_generation_length=max_tokens,
-            batch_multiplier=batch_multiplier,
         )
 
         prefill, prefill_steps = self._prepare_audio_prompt(audio_prompts)
@@ -487,17 +416,12 @@ class Dia:
         dec_output.prefill(prefill, prefill_steps)
 
         dec_step = min(prefill_steps) - 1
-        dec_state.speaker_condition = decoder_speaker_condition
         if dec_step > 0:
             dec_state.prepare_step(0, dec_step)
-            tokens_BxTxC = dec_output.get_tokens_at(0, dec_step)
-            if not disable_cfg:
-                tokens_BxTxC = tokens_BxTxC.repeat_interleave(2, dim=0)
-            self.model.decoder.forward(
-                tokens_BxTxC,
-                dec_state,
-                speaker_condition=decoder_speaker_condition,
+            tokens_BxTxC = dec_output.get_tokens_at(0, dec_step).repeat_interleave(
+                2, dim=0
             )
+            self.model.decoder.forward(tokens_BxTxC, dec_state)
 
         return dec_state, dec_output
 
@@ -510,7 +434,6 @@ class Dia:
         top_p: float,
         top_k: int,
         current_idx: int,
-        disable_cfg: bool = False,
     ) -> torch.Tensor:
         """Performs a single step of the decoder inference.
 
@@ -533,42 +456,30 @@ class Dia:
             torch.Tensor: The sampled next tokens for each item in the batch,
                           shape [B, C].
         """
+        B = tokens_Bx1xC.shape[0] // 2
+
         audio_eos_value = self.config.eos_token_id
         logits_Bx1xCxV = self.model.decoder.decode_step(
-            tokens_Bx1xC,
-            dec_state,
-            current_idx,
-            speaker_condition=getattr(dec_state, "speaker_condition", None),
+            tokens_Bx1xC, dec_state, current_idx
         )
-        if disable_cfg:
-            B = tokens_Bx1xC.shape[0]
-            logits_BxCxV = logits_Bx1xCxV[:, -1]
-            if top_k is not None:
-                _, top_k_indices_BxCxk = torch.topk(logits_BxCxV, k=top_k, dim=-1)
-                mask_BxCxV = torch.ones_like(logits_BxCxV, dtype=torch.bool)
-                mask_BxCxV = mask_BxCxV.scatter(
-                    dim=-1, index=top_k_indices_BxCxk, value=False
-                )
-                logits_BxCxV = logits_BxCxV.masked_fill(mask_BxCxV, -torch.inf)
-        else:
-            B = tokens_Bx1xC.shape[0] // 2
-            logits_last_2BxCxV = logits_Bx1xCxV[:, -1]
-            logits_last_Bx2xCxV = logits_last_2BxCxV.view(
-                B, 2, *logits_last_2BxCxV.shape[1:]
-            )
 
-            uncond_logits_BxCxV = logits_last_Bx2xCxV[:, 0, :, :]
-            cond_logits_BxCxV = logits_last_Bx2xCxV[:, 1, :, :]
-            cfg_logits_BxCxV = cond_logits_BxCxV + cfg_scale * (
-                cond_logits_BxCxV - uncond_logits_BxCxV
-            )
+        logits_last_2BxCxV = logits_Bx1xCxV[:, -1]
+        logits_last_Bx2xCxV = logits_last_2BxCxV.view(
+            B, 2, *logits_last_2BxCxV.shape[1:]
+        )
 
-            _, top_k_indices_BxCxk = torch.topk(cfg_logits_BxCxV, k=top_k, dim=-1)
-            mask_BxCxV = torch.ones_like(cond_logits_BxCxV, dtype=torch.bool)
-            mask_BxCxV = mask_BxCxV.scatter(
-                dim=-1, index=top_k_indices_BxCxk, value=False
-            )
-            logits_BxCxV = cond_logits_BxCxV.masked_fill(mask_BxCxV, -torch.inf)
+        uncond_logits_BxCxV = logits_last_Bx2xCxV[:, 0, :, :]  # Shape [B, C, V]
+        cond_logits_BxCxV = logits_last_Bx2xCxV[:, 1, :, :]  # Shape [B, C, V]
+        # CFG-filter: Use CFG logits to determine top-k mask, but apply to original conditional logits
+        cfg_logits_BxCxV = cond_logits_BxCxV + cfg_scale * (
+            cond_logits_BxCxV - uncond_logits_BxCxV
+        )
+
+        _, top_k_indices_BxCxk = torch.topk(cfg_logits_BxCxV, k=top_k, dim=-1)
+        mask_BxCxV = torch.ones_like(cond_logits_BxCxV, dtype=torch.bool)
+        mask_BxCxV = mask_BxCxV.scatter(dim=-1, index=top_k_indices_BxCxk, value=False)
+        # Apply mask to original conditional logits to avoid CFG speed-up bias
+        logits_BxCxV = cond_logits_BxCxV.masked_fill(mask_BxCxV, -torch.inf)
 
         logits_BxCxV[:, :, audio_eos_value + 1 :] = torch.full_like(
             logits_BxCxV[:, :, audio_eos_value + 1 :],
@@ -744,16 +655,6 @@ class Dia:
         | None = None,
         use_cfg_filter: bool | None = None,
         verbose: bool = False,
-        stream_probe_dir: str | None = None,
-        stream_probe_every_tokens: int = 86,
-        disable_cfg: bool = False,
-        max_audio_seconds: float | None = None,
-        max_output_tokens_per_char: float | None = None,
-        hard_stop_after_tokens: int | None = None,
-        trim_audio_prompt_from_output: bool = False,
-        audio_prompt_context_frames: int = DEFAULT_PROMPT_TRIM_CONTEXT_FRAMES,
-        speaker_id: int | list[int] | None = None,
-        stream_callback = None,
     ) -> np.ndarray | list[np.ndarray]:
         """Generates audio corresponding to the input text.
 
@@ -778,8 +679,6 @@ class Dia:
             use_cfg_filter: (Deprecated) This parameter is no longer used.
             verbose: If True, prints progress information during generation, including
                      speed metrics.
-            speaker_id: Optional speaker identity input reserved for speaker-conditioned
-                        checkpoints. Ignored when speaker conditioning is disabled.
 
         Returns:
             If a single text prompt was provided, returns a NumPy array containing the
@@ -796,9 +695,7 @@ class Dia:
         delay_pattern_Cx = torch.tensor(
             delay_pattern, device=self.device, dtype=torch.long
         )
-        requested_max_tokens = max_tokens
         self.model.eval()
-        self.last_generate_metadata = {}
 
         if audio_prompt_path:
             print("Warning: audio_prompt_path is deprecated. Use audio_prompt instead.")
@@ -833,53 +730,15 @@ class Dia:
         assert len(audio_prompt) == batch_size, (
             "Number of audio prompts must match batch size"
         )
-        resolved_speaker_ids = self._resolve_speaker_id_batch(batch_size, speaker_id)
-        prompt_code_steps = [
-            int(prompt.shape[0]) if isinstance(prompt, torch.Tensor) else 0
-            for prompt in audio_prompt
-        ]
-        prompt_duration_ms = [
-            float(step) * SAMPLE_RATE_RATIO / DEFAULT_SAMPLE_RATE * 1000.0
-            for step in prompt_code_steps
-        ]
 
         if isinstance(text, list):
-            text_inputs = text
             text = [self._encode_text(t) for t in text]
         else:
-            text_inputs = [text]
             text = [self._encode_text(text)]
         text = self._pad_text_input(text)
 
-        effective_max_tokens = max_tokens
-        stop_constraints: dict[str, int | float] = {}
-        if hard_stop_after_tokens is not None:
-            effective_max_tokens = min(effective_max_tokens, hard_stop_after_tokens)
-            stop_constraints["hard_stop_after_tokens"] = hard_stop_after_tokens
-        if max_audio_seconds is not None and max_audio_seconds > 0:
-            tokens_for_audio_seconds = max(
-                1,
-                ceil(
-                    max_audio_seconds * DEFAULT_SAMPLE_RATE / SAMPLE_RATE_RATIO
-                ),
-            ) + max_delay_pattern
-            effective_max_tokens = min(effective_max_tokens, tokens_for_audio_seconds)
-            stop_constraints["max_audio_seconds"] = max_audio_seconds
-        if max_output_tokens_per_char is not None and max_output_tokens_per_char > 0:
-            max_chars = max(len(item) for item in text_inputs)
-            tokens_for_chars = max(
-                1, ceil(max_chars * max_output_tokens_per_char)
-            ) + max_delay_pattern
-            effective_max_tokens = min(effective_max_tokens, tokens_for_chars)
-            stop_constraints["max_output_tokens_per_char"] = max_output_tokens_per_char
-        effective_max_tokens = max(effective_max_tokens, max_delay_pattern + 1)
-
         dec_state, dec_output = self._prepare_generation(
-            text,
-            audio_prompt,
-            max_tokens=effective_max_tokens,
-            disable_cfg=disable_cfg,
-            speaker_ids=resolved_speaker_ids,
+            text, audio_prompt, max_tokens=max_tokens
         )
         dec_step = min(dec_output.prefill_steps) - 1
         current_idx = torch.tensor([dec_step], device=self.device)
@@ -893,22 +752,8 @@ class Dia:
         finished_step_Bx = torch.full(
             (batch_size,), -1, dtype=torch.long, device=self.device
         )
-        eos_step_Bx = torch.full((batch_size,), -1, dtype=torch.long, device=self.device)
-        stop_reason_code_Bx = torch.zeros(
-            (batch_size,), dtype=torch.long, device=self.device
-        )
 
         bos_over = False
-
-        # --- Stream probe init ---
-        _probe_prefill = dec_output.prefill_steps[0]
-        _probe_sample_count = 0
-        _probe_chunk_idx = 0
-
-        if stream_probe_dir is not None:
-            from pathlib import Path
-
-            Path(stream_probe_dir).mkdir(parents=True, exist_ok=True)
 
         if verbose:
             print("generate: starting generation loop")
@@ -919,16 +764,16 @@ class Dia:
             start_time = time.time()
 
         # --- Generation Loop ---
-        while dec_step < effective_max_tokens:
+        while dec_step < max_tokens:
             if (eos_countdown_Bx == 0).all():
                 break
 
             current_step_idx = dec_step + 1
             torch.compiler.cudagraph_mark_step_begin()
             dec_state.prepare_step(dec_step)
-            tokens_Bx1xC = dec_output.get_tokens_at(dec_step)
-            if not disable_cfg:
-                tokens_Bx1xC = tokens_Bx1xC.repeat_interleave(2, dim=0)
+            tokens_Bx1xC = dec_output.get_tokens_at(dec_step).repeat_interleave(
+                2, dim=0
+            )  # Repeat for CFG
 
             pred_BxC = self._decoder_step(
                 tokens_Bx1xC,
@@ -938,7 +783,6 @@ class Dia:
                 top_p,
                 cfg_filter_top_k,
                 current_idx,
-                disable_cfg=disable_cfg,
             )
 
             current_idx += 1
@@ -946,25 +790,16 @@ class Dia:
             active_mask_Bx = eos_countdown_Bx != 0
             eos_trigger_Bx = torch.zeros_like(active_mask_Bx)
             if active_mask_Bx.any():
-                is_eos_token_active = (~eos_detected_Bx[active_mask_Bx]) & (
+                is_eos_token = (~eos_detected_Bx[active_mask_Bx]) & (
                     pred_BxC[active_mask_Bx, 0] == audio_eos_value
                 )
-                active_indices = torch.nonzero(active_mask_Bx, as_tuple=False).squeeze(-1)
-                is_eos_token = torch.zeros_like(active_mask_Bx)
-                is_eos_token[active_indices] = is_eos_token_active
-                is_max_len = current_step_idx >= effective_max_tokens - max_delay_pattern
-                is_max_len_mask = active_mask_Bx & is_max_len
-                eos_trigger_Bx = is_eos_token | is_max_len_mask
+                is_max_len = current_step_idx >= max_tokens - max_delay_pattern
+                eos_trigger_Bx[active_mask_Bx] = is_eos_token | is_max_len
             eos_detected_Bx |= eos_trigger_Bx
             start_countdown_mask_Bx = eos_trigger_Bx & (eos_countdown_Bx < 0)
             if start_countdown_mask_Bx.any():
                 eos_countdown_Bx[start_countdown_mask_Bx] = max_delay_pattern
                 finished_step_Bx[start_countdown_mask_Bx] = current_step_idx
-                eos_step_Bx[start_countdown_mask_Bx] = current_step_idx
-                eos_only_mask_Bx = start_countdown_mask_Bx & is_eos_token
-                max_len_mask_Bx = start_countdown_mask_Bx & (~is_eos_token)
-                stop_reason_code_Bx[eos_only_mask_Bx] = 1
-                stop_reason_code_Bx[max_len_mask_Bx] = 2
 
             padding_mask_Bx = eos_countdown_Bx > 0
             if padding_mask_Bx.any():
@@ -991,67 +826,6 @@ class Dia:
 
             dec_step += 1
 
-            # --- Stream probe ---
-            if (
-                (stream_probe_dir is not None or stream_callback is not None)
-                and self.load_dac
-                and dec_step > 0
-                and dec_step % stream_probe_every_tokens == 0
-            ):
-                _n_tokens = dec_step - _probe_prefill
-
-                if _n_tokens > max_delay_pattern:
-                    _window = dec_output.generated_tokens[
-                        0,
-                        _probe_prefill : _probe_prefill + _n_tokens,
-                        :,
-                    ].unsqueeze(0)
-
-                    _n_valid = max(0, _n_tokens - max_delay_pattern)
-
-                    if _n_valid > 0:
-                        _probe_lengths = torch.tensor(
-                            [_n_valid],
-                            dtype=torch.long,
-                            device=self.device,
-                        )
-
-                        _audio_so_far = self._generate_output(
-                            _window,
-                            _probe_lengths,
-                        )[0]
-
-                        _chunk = _audio_so_far[_probe_sample_count:]
-                        _probe_sample_count = len(_audio_so_far)
-
-                        if len(_chunk) > 0:
-                            _probe_chunk_idx += 1
-
-                            _chunk_tensor = torch.from_numpy(_chunk).float().cpu()
-
-                            if _chunk_tensor.ndim == 1:
-                                _chunk_tensor = _chunk_tensor.unsqueeze(0)
-
-                            if stream_callback is not None:
-                                stream_callback(
-                                    _chunk,
-                                    DEFAULT_SAMPLE_RATE,
-                                    _probe_chunk_idx,
-                                    False,
-                                )
-
-                            if stream_probe_dir is not None:
-                                torchaudio.save(
-                                    f"{stream_probe_dir}/chunk_{_probe_chunk_idx:03d}.wav",
-                                    _chunk_tensor,
-                                    DEFAULT_SAMPLE_RATE,
-                                )
-
-                            if verbose:
-                                print(
-                                    f"stream probe: saved chunk {_probe_chunk_idx:03d}, samples={len(_chunk)}"
-                                )
-
             if verbose and dec_step % 86 == 0:
                 duration = time.time() - start_time
                 if duration > 0:
@@ -1063,18 +837,13 @@ class Dia:
         # --- Finalize and Extract Output ---
         final_step = dec_step + 1
 
-        unfinished_mask_Bx = finished_step_Bx == -1
-        finished_step_Bx[unfinished_mask_Bx] = final_step - max_delay_pattern
-        stop_reason_code_Bx[unfinished_mask_Bx] = 2
+        finished_step_Bx[finished_step_Bx == -1] = final_step - max_delay_pattern
 
         prefill_steps_tensor = torch.tensor(
             dec_output.prefill_steps, device=self.device
         )
         lengths_Bx = finished_step_Bx - prefill_steps_tensor
         lengths_Bx = torch.clamp(lengths_Bx, min=0)
-        effective_audio_duration_ms_Bx = (
-            lengths_Bx.to(torch.float32) * SAMPLE_RATE_RATIO / DEFAULT_SAMPLE_RATE * 1000.0
-        )
 
         max_len = lengths_Bx.max().item() + max_delay_pattern
         outputs = []
@@ -1107,156 +876,9 @@ class Dia:
 
             del dec_state
 
-            if trim_audio_prompt_from_output and any(prompt_code_steps):
-                outputs = []
-                trimmed_samples: list[int] = []
-                prompt_context_frames_per_item: list[int] = []
-                output_duration_before_trim_ms: list[float] = []
-                output_duration_after_trim_ms: list[float] = []
-                decode_start_steps: list[int] = []
-                decode_end_steps: list[int] = []
-                decoded_code_steps: list[int] = []
-                trimmed_code_steps: list[int] = []
-
-                for i in range(batch_size):
-                    prefill_step = dec_output.prefill_steps[i]
-                    prompt_context_frames = min(
-                        max(0, prefill_step),
-                        max(0, audio_prompt_context_frames),
-                    )
-                    prompt_context_frames_per_item.append(prompt_context_frames)
-
-                    decode_start = max(0, prefill_step - prompt_context_frames)
-                    decode_start_steps.append(int(decode_start))
-                    total_valid_frames = prompt_context_frames + lengths_Bx[i].item()
-                    decoded_code_steps.append(int(total_valid_frames))
-                    trimmed_code_steps.append(int(lengths_Bx[i].item()))
-                    total_delayed_frames = total_valid_frames + max_delay_pattern
-                    decode_end_steps.append(int(decode_start + total_delayed_frames))
-                    delayed_codes = dec_output.generated_tokens[
-                        i : i + 1,
-                        decode_start : decode_start + total_delayed_frames,
-                        :,
-                    ]
-                    decode_lengths = torch.tensor(
-                        [total_valid_frames],
-                        dtype=torch.long,
-                        device=self.device,
-                    )
-                    decoded_audio = self._generate_output(delayed_codes, decode_lengths)[0]
-                    before_trim_ms = (
-                        1000.0 * float(len(decoded_audio)) / float(DEFAULT_SAMPLE_RATE)
-                        if decoded_audio is not None
-                        else 0.0
-                    )
-                    discard_samples = prompt_context_frames * SAMPLE_RATE_RATIO
-                    end_sample = discard_samples + lengths_Bx[i].item() * SAMPLE_RATE_RATIO
-                    trimmed_samples.append(discard_samples)
-                    output_duration_before_trim_ms.append(before_trim_ms)
-                    if decoded_audio is None:
-                        outputs.append(None)
-                        output_duration_after_trim_ms.append(0.0)
-                    else:
-                        trimmed_audio = decoded_audio[discard_samples:end_sample]
-                        outputs.append(trimmed_audio)
-                        output_duration_after_trim_ms.append(
-                            1000.0
-                            * float(len(trimmed_audio))
-                            / float(DEFAULT_SAMPLE_RATE)
-                        )
-            else:
-                outputs = self._generate_output(generated_codes, lengths_Bx)
-                trimmed_samples = [0] * batch_size
-                prompt_context_frames_per_item = [0] * batch_size
-                output_duration_before_trim_ms = [
-                    1000.0 * float(len(audio)) / float(DEFAULT_SAMPLE_RATE)
-                    if audio is not None
-                    else 0.0
-                    for audio in outputs
-                ]
-                output_duration_after_trim_ms = list(output_duration_before_trim_ms)
-                decode_start_steps = [0] * batch_size
-                decode_end_steps = [0] * batch_size
-                decoded_code_steps = [int(v) for v in lengths_Bx.detach().cpu().tolist()]
-                trimmed_code_steps = [int(v) for v in lengths_Bx.detach().cpu().tolist()]
-
-            # --- Stream probe final tail ---
-            if (
-                (stream_probe_dir is not None or stream_callback is not None)
-                and self.load_dac
-                and outputs
-                and outputs[0] is not None
-            ):
-                _final_audio = outputs[0]
-                _final_tail = _final_audio[_probe_sample_count:]
-
-                if len(_final_tail) > 0:
-                    _probe_chunk_idx += 1
-
-                    _final_tail_tensor = torch.from_numpy(_final_tail).float().cpu()
-
-                    if _final_tail_tensor.ndim == 1:
-                        _final_tail_tensor = _final_tail_tensor.unsqueeze(0)
-
-                    if stream_callback is not None:
-                        stream_callback(
-                            _final_tail,
-                            DEFAULT_SAMPLE_RATE,
-                            _probe_chunk_idx,
-                            True,
-                        )
-
-                    if stream_probe_dir is not None:
-                        torchaudio.save(
-                            f"{stream_probe_dir}/chunk_{_probe_chunk_idx:03d}_final.wav",
-                            _final_tail_tensor,
-                            DEFAULT_SAMPLE_RATE,
-                        )
-
-                    if verbose:
-                        print(
-                            f"stream probe: saved final tail chunk {_probe_chunk_idx:03d}, samples={len(_final_tail)}"
-                        )
+            outputs = self._generate_output(generated_codes, lengths_Bx)
         else:
             print("Warning: Nothing generated for any sequence in the batch.")
             outputs = [None] * batch_size
-
-        stop_reason_lookup = {
-            0: "other",
-            1: "eos",
-            2: "max_tokens",
-        }
-        self.last_generate_metadata = {
-            "disable_cfg": disable_cfg,
-            "requested_max_tokens": requested_max_tokens,
-            "effective_max_tokens": effective_max_tokens,
-            "stop_constraints": stop_constraints,
-            "trim_audio_prompt_from_output": trim_audio_prompt_from_output,
-            "prompt_code_steps": prompt_code_steps,
-            "prompt_duration_ms": prompt_duration_ms,
-            "audio_prompt_context_frames_requested": int(audio_prompt_context_frames),
-            "prompt_context_frames": prompt_context_frames_per_item,
-            "trimmed_samples": trimmed_samples,
-            "decode_start": decode_start_steps,
-            "decode_end": decode_end_steps,
-            "decoded_code_steps": decoded_code_steps,
-            "trimmed_code_steps": trimmed_code_steps,
-            "output_duration_before_trim_ms": output_duration_before_trim_ms,
-            "output_duration_after_trim_ms": output_duration_after_trim_ms,
-            "eos_detected": [bool(v) for v in eos_detected_Bx.detach().cpu().tolist()],
-            "eos_step": [
-                None if int(v) < 0 else int(v) for v in eos_step_Bx.detach().cpu().tolist()
-            ],
-            "stop_step": [int(v) for v in finished_step_Bx.detach().cpu().tolist()],
-            "stop_reason": [
-                stop_reason_lookup[int(v)]
-                for v in stop_reason_code_Bx.detach().cpu().tolist()
-            ],
-            "effective_audio_duration_ms": [
-                float(v) for v in effective_audio_duration_ms_Bx.detach().cpu().tolist()
-            ],
-            "generated_token_count": [int(v) for v in lengths_Bx.detach().cpu().tolist()],
-            "max_tokens": requested_max_tokens,
-        }
 
         return outputs if batch_size > 1 else outputs[0]
