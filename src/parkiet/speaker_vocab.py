@@ -12,11 +12,16 @@ def load_speaker_vocab(path: str | Path) -> dict[str, Any]:
         data = json.load(handle)
     if "default_speaker_id" not in data:
         raise ValueError("speaker vocab is missing 'default_speaker_id'")
-    if "db_speaker_id_to_model_speaker_id" not in data:
-        raise ValueError("speaker vocab is missing 'db_speaker_id_to_model_speaker_id'")
-    mapping = data["db_speaker_id_to_model_speaker_id"]
+    mapping = data.get("db_speaker_id_to_model_speaker_id")
+    if mapping is None:
+        mapping = data.get("source_speaker_id_to_model_speaker_id")
+    if mapping is None:
+        raise ValueError(
+            "speaker vocab is missing 'db_speaker_id_to_model_speaker_id' or "
+            "'source_speaker_id_to_model_speaker_id'"
+        )
     if not isinstance(mapping, dict):
-        raise ValueError("'db_speaker_id_to_model_speaker_id' must be an object")
+        raise ValueError("speaker id mapping must be an object")
     return {
         "default_speaker_id": int(data["default_speaker_id"]),
         "db_speaker_id_to_model_speaker_id": {

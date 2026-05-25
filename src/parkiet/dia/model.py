@@ -20,6 +20,13 @@ from .state import DecoderInferenceState, DecoderOutput, EncoderInferenceState
 
 DEFAULT_SAMPLE_RATE = 44100
 SAMPLE_RATE_RATIO = 512
+SPEAKER_MODULE_STATE_KEYS = {
+    "speaker_embedding.weight",
+    "speaker_to_encoder.weight",
+    "speaker_to_encoder.bias",
+    "speaker_to_decoder.weight",
+    "speaker_to_decoder.bias",
+}
 
 
 def _get_default_device():
@@ -87,6 +94,39 @@ def _sample_next_token(
     sampled_indices_C = sampled_indices_BC.squeeze(-1)
 
     return sampled_indices_C
+
+
+def load_state_dict_allowing_missing_speaker_modules(
+    module: torch.nn.Module,
+    state_dict: dict[str, torch.Tensor],
+    *,
+    allow_missing_speaker_modules: bool = False,
+) -> tuple[list[str], list[str]]:
+    incompat = module.load_state_dict(state_dict, strict=False)
+    missing_keys = list(incompat.missing_keys)
+    unexpected_keys = list(incompat.unexpected_keys)
+
+    if unexpected_keys:
+        raise RuntimeError(
+            f"Unexpected checkpoint keys: {sorted(unexpected_keys)}"
+        )
+
+    if not allow_missing_speaker_modules and missing_keys:
+        raise RuntimeError(
+            f"Missing checkpoint keys: {sorted(missing_keys)}"
+        )
+
+    if allow_missing_speaker_modules:
+        disallowed_missing = sorted(
+            key for key in missing_keys if key not in SPEAKER_MODULE_STATE_KEYS
+        )
+        if disallowed_missing:
+            raise RuntimeError(
+                "Checkpoint is missing non-speaker keys: "
+                f"{disallowed_missing}"
+            )
+
+    return missing_keys, unexpected_keys
 
 
 class ComputeDtype(str, Enum):

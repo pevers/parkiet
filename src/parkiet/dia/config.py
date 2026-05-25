@@ -142,6 +142,11 @@ class DiaConfig(BaseModel):
     model_type: str = Field(default="dia")
     norm_eps: float = Field(default=1e-5)
     pad_token_id: int = Field(default=1025)
+    speaker_conditioning_enabled: bool = Field(default=False)
+    speaker_embedding_dim: int = Field(default=256, gt=0)
+    num_speakers: int = Field(default=0, ge=0)
+    default_speaker_id: int = Field(default=0, ge=0)
+    speaker_conditioning_mode: str = Field(default="encoder_decoder_additive")
     torch_dtype: str = Field(default="float32")
     transformers_version: str = Field(default="4.53.0.dev0")
 
@@ -158,7 +163,9 @@ class DiaConfig(BaseModel):
         Raises:
             ValueError: If the path is not a file with a .json extension.
         """
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        dir_name = os.path.dirname(path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
         config_json = self.model_dump_json(indent=2)
         with open(path, "w") as f:
             f.write(config_json)
