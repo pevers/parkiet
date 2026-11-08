@@ -173,7 +173,7 @@ class Dia:
         dia = cls(config, compute_dtype, device, load_dac)
 
         try:
-            state_dict = torch.load(checkpoint_path, map_location=dia.device)
+            state_dict = torch.load(checkpoint_path, map_location=dia.device, weights_only=True)
             dia.model.load_state_dict(state_dict)
         except FileNotFoundError:
             raise FileNotFoundError(f"Checkpoint file not found at {checkpoint_path}")
